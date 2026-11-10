@@ -6,7 +6,7 @@
 4. A target is opened read-attributes only, with read/write/delete sharing when allowed. Matched volume + FILE_ID_INFO is stronger evidence than an apparent pathname match. If identity cannot be obtained (exclusive sharing, unsupported volume), final paths are compared cautiously, and each such hit is labelled `Path (heuristic)`.
 5. Process handles are opened with only `PROCESS_DUP_HANDLE` and, separately, `PROCESS_QUERY_LIMITED_INFORMATION`. Keeping handles open reduces PID-reuse risk. A second snapshot checks `(PID, handle value, kernel object pointer, type index)` evidence, but races are still possible. Creation times are retained where available; unexpected PID reuse is explicitly marked as an uncertain result.
 6. The worker has an internal 14.5-second scanning budget checked between potentially blocking API calls. The parent uses an 18-second watchdog and can terminate **only the child worker it created**. Even kernel-mode hangs may delay worker termination; the GUI does not wait indefinitely for its process. Job object `KILL_ON_JOB_CLOSE` is applied when supported.
-7. The UI owns the selection, scan generation, one active worker thread and optional 2-second wait timer. Selecting a new file cancels or supersedes older work. Incomplete/error/zero-result states never imply deletion is safe.
+7. The UI owns the selection, scan generation, one active worker thread and optional 2-second wait timer. Selecting a new file cancels or supersedes older work. Waiting pins the selected file's volume + file ID and stops without claiming release if the path is replaced. Incomplete/error/zero-result states never imply deletion is safe.
 
 ## Security notes
 

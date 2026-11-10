@@ -103,6 +103,10 @@ void UnitTests() {
     Check(NormalizePath(L"") == L"", "reject empty path");
     Check(!NormalizePath(L"C:\\Тест файл.xlsx").empty(), "accept Unicode path");
     Check(NormalizePath(L"\\\\.\\PhysicalDrive0").empty(), "reject device namespace");
+    Check(NormalizePath(L"\\\\?\\GLOBALROOT\\Device\\HarddiskVolume1\\x").empty(),
+          "reject extended GLOBALROOT device namespace");
+    Check(NormalizePath(L"\\\\?\\Volume{11111111-1111-1111-1111-111111111111}\\x").empty(),
+          "reject extended volume namespace rather than misresolve it");
 }
 void IntegrationTests() {
     wchar_t directory[MAX_PATH + 1]{};
@@ -159,6 +163,10 @@ void IntegrationTests() {
     const auto absent = lockpeek::RunIsolatedScan(path, nullptr);
     Check(absent.win32Error == ERROR_FILE_NOT_FOUND || absent.win32Error == ERROR_PATH_NOT_FOUND,
           "missing file reports precise error");
+    volatile LONG alreadyCanceled = 1;
+    const auto canceled = lockpeek::RunIsolatedScan(path, &alreadyCanceled);
+    Check(canceled.canceled && canceled.partial && canceled.hits.empty(),
+          "canceled scan does not start or publish stale results");
 }
 } // namespace
 

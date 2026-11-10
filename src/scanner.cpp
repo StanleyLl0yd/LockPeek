@@ -230,8 +230,18 @@ std::wstring NormalizePath(const std::wstring& input) {
     if (input.empty() || input.size() >= 32767) return {};
     std::wstring path = input;
     // Do not feed NT namespace paths through GetFullPathNameW as DOS paths.
-    if (path.starts_with(L"\\\\?\\UNC\\")) path = L"\\\\" + path.substr(8);
-    else if (path.starts_with(L"\\\\?\\")) path = path.substr(4);
+    if (path.starts_with(L"\\\\?\\UNC\\")) {
+        path = L"\\\\" + path.substr(8);
+    } else if (path.starts_with(L"\\\\?\\")) {
+        // Only ordinary DOS drive paths may safely lose this prefix.
+        // Volume GUID, GLOBALROOT and device namespaces are not DOS paths.
+        path = path.substr(4);
+        if (path.size() < 3) return {};
+        const bool driveLetter = (path[0] >= L'A' && path[0] <= L'Z') ||
+                                 (path[0] >= L'a' && path[0] <= L'z');
+        if (!driveLetter || path[1] != L':' ||
+            (path[2] != L'\\' && path[2] != L'/')) return {};
+    }
     if (path.starts_with(L"\\??\\") || path.starts_with(L"\\\\.\\")) return {};
     std::wstring absolute(32768, L'\0');
     const DWORD n = GetFullPathNameW(path.c_str(), static_cast<DWORD>(absolute.size()), absolute.data(), nullptr);
@@ -502,6 +512,11 @@ void PopulateProcessNames(ScanResult& result) {
 
 ScanResult RunIsolatedScan(const std::wstring& filename, const volatile LONG* cancel) {
     ScanResult result{};
+    if (cancel && InterlockedCompareExchange(const_cast<volatile LONG*>(cancel), 0, 0)) {
+        result.canceled = true;
+        result.partial = true;
+        return result;
+    }
     const std::wstring exe = ModuleName();
     if (exe.empty()) { result.win32Error = ERROR_BAD_PATHNAME; return result; }
     SECURITY_ATTRIBUTES sa{sizeof(sa), nullptr, TRUE};

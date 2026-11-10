@@ -287,7 +287,7 @@ class App {
         ofn.hwndOwner = window_;
         ofn.lpstrFile = name.data();
         ofn.nMaxFile = static_cast<DWORD>(name.size());
-        ofn.lpstrFilter = L"All files\0*.*\0\0";
+        ofn.lpstrFilter = Text(L"All files\0*.*\0\0", L"Все файлы\0*.*\0\0");
         ofn.Flags = OFN_EXPLORER | OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR;
         if (GetOpenFileNameW(&ofn)) Select(name.c_str());
     }
@@ -316,10 +316,26 @@ class App {
         report += Text(L"Matching processes: ", L"Совпадающих процессов: ") +
                   std::to_wstring(result_.hits.size()) + L"\r\n";
         for (const auto& hit : result_.hits) {
-            report += L"PID " + std::to_wstring(hit.pid) + L" | " +
-                      (hit.image.empty() ? L"[unavailable]" : hit.image) + L" | " +
-                      (hit.match == Match::FileId ? L"File ID" : L"Path (heuristic)") +
-                      (hit.service.empty() ? L"" : L" | Service: " + hit.service) + L"\r\n";
+            const std::wstring image = hit.image.empty() ?
+                Text(L"[unavailable]", L"[недоступно]") : hit.image;
+            report += L"PID " + std::to_wstring(hit.pid) + L" | " + image + L" | " +
+                      (hit.match == Match::FileId ? L"File ID" :
+                       Text(L"Path (heuristic)", L"Путь (эвристика)")) +
+                      (hit.service.empty() ? L"" :
+                       std::wstring(Text(L" | Service: ", L" | Служба: ")) + hit.service) + L"\r\n";
+        }
+        if (result_.win32Error) {
+            report += Text(L"Windows error: ", L"Ошибка Windows: ") +
+                      std::to_wstring(result_.win32Error) + L"\r\n";
+        }
+        if (result_.ntstatus) {
+            wchar_t buffer[24]{};
+            swprintf_s(buffer, L"0x%08X", result_.ntstatus);
+            report += std::wstring(L"NTSTATUS: ") + buffer + L"\r\n";
+        }
+        if (result_.inaccessible) {
+            report += Text(L"Inaccessible processes: ", L"Недоступных процессов: ") +
+                      std::to_wstring(result_.inaccessible) + L"\r\n";
         }
         report += Text(L"Not proof of a deletion lock. ", L"Не доказывает блокировку удаления. ");
         report += (result_.partial || result_.timeout || result_.win32Error) ?
@@ -397,11 +413,12 @@ public:
         UpdateWindow(window_);
         if (!initialFile.empty()) Select(initialFile);
         MSG msg{};
-        while (GetMessageW(&msg, nullptr, 0, 0) > 0) {
+        BOOL received = 0;
+        while ((received = GetMessageW(&msg, nullptr, 0, 0)) > 0) {
             TranslateMessage(&msg);
             DispatchMessageW(&msg);
         }
-        return static_cast<int>(msg.wParam);
+        return received < 0 ? 3 : static_cast<int>(msg.wParam);
     }
 private:
     static LRESULT CALLBACK WindowProc(HWND h, UINT m, WPARAM w, LPARAM l) {

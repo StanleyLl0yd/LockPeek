@@ -8,6 +8,7 @@
 - Some driver responses to duplicated handles may block. The worker is isolated and subject to a deadline, but a kernel-mode hang may outlive process termination. A terminated worker can temporarily remain as a process object until the OS releases it.
 - Access-denied or concurrently closed handles make scanning incomplete; there can be false negatives. Object identity and process liveness can race with snapshots.
 - File ID matching requires the target to be safely opened with read-attributes access. When exclusive sharing prevents this, path fallback is heuristic and cannot resolve all hardlinks, symbolic links or junctions. Case-sensitive directories are particularly problematic for the fallback.
+- Waiting pins the original target's file identity where available and stops if the path is replaced; without reliable target identity, waiting does not declare success.
 - The selected path itself must be an ordinary file: selected symlinks/reparse points fail closed with `ERROR_NOT_SUPPORTED`. Reparse points in parent directories, network filesystems, deletion-pending files, very long paths, remote locks, AV minifilters and process isolation can still limit results.
 - Drag/drop from a non-elevated Explorer to an elevated application can be blocked by Windows UIPI; normal launch is preferable.
 - No background service, Explorer context integration, shell extension, scheduled monitoring, forced unlock or process termination UI.

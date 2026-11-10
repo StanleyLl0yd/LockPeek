@@ -4,7 +4,7 @@
 
 `LockPeekTests.exe` performs deterministic unit checks for IPC validation, native-handle buffer bounds, path and command-line escaping, and Unicode acceptance. It then creates **its own** temporary file and launches two child file holders without delete sharing. `RunIsolatedScan` must discover both child PIDs; after cooperative release it must stop listing them. A missing file must report a Win32 error. All temporary files and handles are owned and cleaned up by the test program.
 
-GitHub Actions is configured to build Win32 x64 Release with C++23 and `/MT`, run these tests, validate imports, PE hardening and file size, and upload the unsigned binary and diagnostic report as CI artifacts. Workflows have only `contents: read` permissions.
+GitHub Actions is configured to build Win32 x64 with `/MT`, run these tests, validate imports, PE hardening and file size, and upload the unsigned binary and diagnostic report as CI artifacts. When the runner has stable MSVC 14.51 rather than 14.52+, CI uses an explicitly marked **provisional** `/std:c++23preview` development run. That run can validate behavior but cannot qualify a 1.0 release. Workflows have only `contents: read` permissions.
 
 ## NOT VERIFIED (release-blocking)
 

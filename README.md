@@ -17,7 +17,7 @@ LockPeek is a diagnostic tool. An open file handle **does not prove** that a pro
 
 ## Build
 
-Requires **Visual Studio 2026 / MSVC v14.52 or newer, confirmed stable**, the Windows SDK, and `/std:c++23`. MSVC 14.52 was only publicly confirmed as a Release Candidate on 10 November 2026. The project and CI **fail closed** with older compilers; no silent `/std:c++latest` fallback. The project requests `/MT` for the release configuration, uses standard Windows DLLs and enables CFG/ASLR/DEP. Run from a VS 2026 x64 Developer Command Prompt:
+The final release requires **Visual Studio 2026 / MSVC v14.52 or newer, confirmed stable**, the Windows SDK, and `/std:c++23`. MSVC 14.52 was publicly confirmed only as a Release Candidate when the project was prepared. **Provisional development/testing** on stable MSVC 14.51 is explicitly supported with `/std:c++23preview`; this is *not* a release-qualified build. No silent `/std:c++latest` or C++20 fallback is permitted. The project requests `/MT` for the release configuration, uses standard Windows DLLs and enables CFG/ASLR/DEP. Run from a VS 2026 x64 Developer Command Prompt:
 
 ```cmd
 msbuild LockPeek.sln /m /t:Build /p:Configuration=Release /p:Platform=x64
@@ -25,11 +25,11 @@ x64\Release\LockPeekTests.exe
 powershell -ExecutionPolicy Bypass -File scripts\verify-release.ps1 -Exe x64\Release\LockPeek.exe -ReportDirectory .artifacts
 ```
 
-The verifier inspects the PE imports, hardening flags, architecture and size. The binary is **unsigned**; no GitHub Release is created by CI.
+For a **provisional MSVC 14.51 development run only**, append `/p:UsePreviewCxx23=true` to the MSBuild command and `-AllowProvisionalToolchain` to the verifier invocation. GitHub Actions selects the mode explicitly and labels C++23 preview artifacts as not release-qualified. The verifier inspects the PE imports, hardening flags, architecture and size. The binary is **unsigned**; no GitHub Release is created by CI.
 
 ## Status
 
-**Source implementation / initial review, not yet a verified Release Candidate.** In the preparation environment, no Windows/MSVC build or clean Windows VMs are available. All Windows runtime tests, exact EXE size, and PE dependencies are **NOT VERIFIED** until the workflow runs successfully with a stable compiler and clean-machine tests are performed. Do not distribute as a verified 1.0 build yet.
+**Source implementation / initial review, not yet a verified Release Candidate.** In the preparation environment, no Windows/MSVC build or clean Windows VMs are available. Windows runtime tests, exact EXE size and PE dependencies remain **NOT VERIFIED** until CI reports successful execution. A successful provisional 14.51 run would support development but would not replace a stable 14.52+ release build or clean-machine testing. Do not distribute as a verified 1.0 build yet.
 
 ## Source layout
 
