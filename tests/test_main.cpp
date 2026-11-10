@@ -86,6 +86,7 @@ void UnitTests() {
     Check(ValidWire(wire), "accept valid evidence");
     wire.flags = 0x80000000;
     Check(!ValidWire(wire), "reject undocumented flags");
+    Check(sizeof(WireResult) == 56 + 16 * kMaxHits, "versioned IPC carries target file identity");
     std::array<std::byte, 56> snap{};
     size_t count = 7;
     Check(!ValidateExtendedHandleBuffer(snap.data(), 15, count) && count == 0,
@@ -132,6 +133,7 @@ void IntegrationTests() {
             bool found = false;
             for (const auto& hit : single.hits) if (hit.pid == a.pid) found = true;
             Check(!single.win32Error && !single.timeout && found, "detect one file holder");
+            Check(single.targetIdentityAvailable, "test target identity captured across IPC");
         }
         const bool second = LaunchHold(path, r2, stop, b) &&
                             WaitForSingleObject(ready2.get(), 10000) == WAIT_OBJECT_0;

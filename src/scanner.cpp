@@ -292,6 +292,11 @@ ScanResult ScanHandles(const std::wstring& file) {
     FILE_ID_INFO targetId{};
     const bool hasId = target.valid() && FileIdentity(target.get(), targetId);
     result.targetIdentityAvailable = hasId;
+    if (hasId) {
+        result.targetVolume = targetId.VolumeSerialNumber;
+        static_assert(sizeof(targetId.FileId.Identifier) == 16);
+        std::memcpy(result.targetFileId.data(), targetId.FileId.Identifier, 16);
+    }
     if (!hasId) result.partial = true;
     std::wstring physicalTarget = target.valid() ? NormalizePath(FinalPath(target.get())) : std::wstring{};
     if (physicalTarget.empty()) physicalTarget = targetPath;
@@ -432,6 +437,8 @@ int RunScanWorker(const std::wstring& filename) {
     out.inaccessible = result.inaccessible;
     out.uninspectable = result.uninspectable;
     out.count = static_cast<uint32_t>(std::min<size_t>(result.hits.size(), kMaxHits));
+    out.targetVolume = result.targetVolume;
+    out.targetFileId = result.targetFileId;
     for (uint32_t i = 0; i < out.count; ++i) {
         out.hits[i] = {result.hits[i].pid, static_cast<uint32_t>(result.hits[i].match), result.hits[i].creation};
     }
@@ -591,6 +598,8 @@ ScanResult RunIsolatedScan(const std::wstring& filename, const volatile LONG* ca
     result.partial = (wire.flags & 1) != 0;
     result.truncated = (wire.flags & 2) != 0;
     result.targetIdentityAvailable = (wire.flags & 4) != 0;
+    result.targetVolume = wire.targetVolume;
+    result.targetFileId = wire.targetFileId;
     result.inaccessible = wire.inaccessible;
     result.uninspectable = wire.uninspectable;
     for (uint32_t i = 0; i < wire.count; ++i) {

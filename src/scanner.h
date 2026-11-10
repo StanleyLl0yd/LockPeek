@@ -3,6 +3,7 @@
 #error LockPeek requires Unicode Windows APIs
 #endif
 #include <windows.h>
+#include <array>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -28,6 +29,8 @@ struct ScanResult {
     bool partial = false;
     bool truncated = false;
     bool targetIdentityAvailable = false;
+    uint64_t targetVolume = 0;
+    std::array<uint8_t, 16> targetFileId{};
     bool timeout = false;
     bool canceled = false;
     uint32_t inaccessible = 0;
@@ -36,7 +39,7 @@ struct ScanResult {
 };
 
 // Fixed-size, versioned IPC payload. No C++ objects or pointers cross the pipe.
-constexpr uint32_t kMagic = 0x314B504C; // LPK1, little endian
+constexpr uint32_t kMagic = 0x324B504C; // LPK2, little endian
 struct WireHit {
     uint32_t pid;
     uint32_t match;
@@ -51,10 +54,12 @@ struct WireResult {
     uint32_t inaccessible = 0;
     uint32_t uninspectable = 0;
     uint32_t count = 0;
+    uint64_t targetVolume = 0;
+    std::array<uint8_t, 16> targetFileId{};
     WireHit hits[kMaxHits]{};
 };
 static_assert(sizeof(WireHit) == 16);
-static_assert(sizeof(WireResult) == 32 + 16 * kMaxHits);
+static_assert(sizeof(WireResult) == 56 + 16 * kMaxHits);
 
 bool ValidWire(const WireResult& w) noexcept;
 bool ValidateExtendedHandleBuffer(const void* data, size_t bytes, size_t& count) noexcept;

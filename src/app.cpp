@@ -6,6 +6,7 @@
 #include <commdlg.h>
 #include <shellapi.h>
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <cstdint>
 #include <cstring>
@@ -45,6 +46,9 @@ class App {
     bool pending_ = false;
     bool waiting_ = false;
     bool hadMatches_ = false;
+    bool waitIdentityPinned_ = false;
+    uint64_t waitVolume_ = 0;
+    std::array<uint8_t, 16> waitFileId_{};
     bool english_ = true;
     uint64_t generation_ = 0;
 
@@ -198,7 +202,23 @@ class App {
             return;
         }
         RefreshList();
-        if (waiting_ && hadMatches_ && result_.hits.empty() && !result_.partial &&
+        if (waiting_ && waitIdentityPinned_ && result_.targetIdentityAvailable &&
+            (waitVolume_ != result_.targetVolume || waitFileId_ != result_.targetFileId)) {
+            waiting_ = false;
+            KillTimer(window_, kWaitTimer);
+            ShowStatus(Text(L"The selected path now refers to a different file. Waiting stopped.",
+                            L"По выбранному пути теперь другой файл. Ожидание остановлено."));
+            UpdateButtons();
+            return;
+        }
+        if (waiting_ && !waitIdentityPinned_ && result_.targetIdentityAvailable &&
+            !result_.hits.empty()) {
+            waitVolume_ = result_.targetVolume;
+            waitFileId_ = result_.targetFileId;
+            waitIdentityPinned_ = true;
+        }
+        if (waiting_ && hadMatches_ && waitIdentityPinned_ &&
+            result_.targetIdentityAvailable && result_.hits.empty() && !result_.partial &&
             !result_.timeout && !result_.win32Error) {
             waiting_ = false;
             KillTimer(window_, kWaitTimer);
@@ -255,6 +275,7 @@ class App {
         selected_ = path;
         result_ = {};
         hadMatches_ = false;
+        waitIdentityPinned_ = false;
         SetWindowTextW(file_, selected_.c_str());
         ListView_DeleteAllItems(list_);
         Start();
@@ -279,6 +300,11 @@ class App {
         } else if (!selected_.empty()) {
             waiting_ = true;
             hadMatches_ = !result_.hits.empty();
+            waitIdentityPinned_ = result_.targetIdentityAvailable;
+            if (waitIdentityPinned_) {
+                waitVolume_ = result_.targetVolume;
+                waitFileId_ = result_.targetFileId;
+            }
             SetTimer(window_, kWaitTimer, 2000, nullptr);
             if (!busy_) Start();
         }
