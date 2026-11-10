@@ -1,0 +1,55 @@
+# Visual Studio
+.vs/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+*.VC.db
+*.VC.opendb
+
+# Build directories
+[Dd]ebug/
+[Rr]elease/
+x64/
+Win32/
+build/
+out/
+bin/
+obj/
+
+# Compiler and linker artifacts
+*.obj
+*.pch
+*.pdb
+*.ipch
+*.idb
+*.ilk
+*.iobj
+*.ipch
+*.ipdb
+*.tlog
+*.lastbuildstate
+*.aps
+*.res
+*.exp
+*.lib
+*.exe
+*.dll
+
+# Temporary and diagnostic files
+*.tmp
+*.temp
+*.bak
+*.log
+*.dmp
+*.mdmp
+
+# macOS
+.DS_Store
+.AppleDouble
+
+# Editor
+.vscode/
+.idea/
+*~
+*.swp
