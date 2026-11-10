@@ -1,80 +1,40 @@
 # LockPeek
 
-**Find out which Windows processes are using a file.**
+**A lightweight, portable Windows utility to identify processes with open handles to a selected file.**
 
-LockPeek is a lightweight, portable Windows utility designed
-to identify processes holding open handles to a selected file.
+LockPeek is a diagnostic tool. An open file handle **does not prove** that a process is preventing deletion, moving or renaming. Inaccessible processes, driver handles, share flags, remote filesystems and permissions may make the result incomplete.
 
-It helps diagnose situations where Windows reports that a file
-is being used by another application.
+## Intended features
 
-## Project status
+- Native C++23 and Win32 GUI, x64 Windows 10/11, Russian and English (OS UI language).
+- Select a single file, drop one from Explorer, or use `LockPeek.exe "C:\path\report.xlsx"`.
+- Enumerate open file handles using `NtQuerySystemInformation(SystemExtendedHandleInformation)`, duplicate accessible file handles and compare by file identity or, when necessary, a clearly labelled heuristic path match. **No Restart Manager fallback.**
+- Show all detected processes (up to 128 distinct matching PIDs), PID, matching method, obtainable executable path and Windows service display name where available.
+- Manually recheck, poll every 2 seconds on explicit request, cancel waiting, copy a text report.
+- Relaunch with UAC elevation on demand when available process permissions limit diagnosis.
+- A separate, disposable invocation of **the same EXE** performs low-level scanning. A parent watchdog limits long-running/hung native requests; it may terminate **only its own worker process**, never another program holding a file.
+- No installer, service, driver, telemetry, network request, process kill or force-close-handle feature.
 
-**Under development.**
+## Build
 
-LockPeek 1.0 has not been released yet.
+Requires **Visual Studio 2026 / MSVC v14.52 or newer, confirmed stable**, the Windows SDK, and `/std:c++23`. MSVC 14.52 was only publicly confirmed as a Release Candidate on 10 November 2026. The project and CI **fail closed** with older compilers; no silent `/std:c++latest` fallback. The project requests `/MT` for the release configuration, uses standard Windows DLLs and enables CFG/ASLR/DEP. Run from a VS 2026 x64 Developer Command Prompt:
 
-## Planned features
+```cmd
+msbuild LockPeek.sln /m /t:Build /p:Configuration=Release /p:Platform=x64
+x64\Release\LockPeekTests.exe
+powershell -ExecutionPolicy Bypass -File scripts\verify-release.ps1 -Exe x64\Release\LockPeek.exe -ReportDirectory .artifacts
+```
 
-- Find processes with open handles to a selected file.
-- Show process names, PIDs and available process details.
-- Detect multiple processes using the same file.
-- Select files through a native Windows file dialog.
-- Drag and drop files into the application.
-- Accept a file path as a command-line argument.
-- Repeat diagnostics on demand.
-- Wait for previously detected handles to disappear.
-- Report inaccessible processes and incomplete scans.
-- Support Unicode and long Windows paths.
-- Request administrator privileges only when needed.
-- Provide a native Windows interface.
+The verifier inspects the PE imports, hardening flags, architecture and size. The binary is **unsigned**; no GitHub Release is created by CI.
 
-## Detection mechanism
+## Status
 
-The primary detection mechanism is Windows system handle
-enumeration using NtQuerySystemInformation with
-SystemExtendedHandleInformation, followed by safe handle
-inspection and file identity comparison.
+**Source implementation / initial review, not yet a verified Release Candidate.** In the preparation environment, no Windows/MSVC build or clean Windows VMs are available. All Windows runtime tests, exact EXE size, and PE dependencies are **NOT VERIFIED** until the workflow runs successfully with a stable compiler and clean-machine tests are performed. Do not distribute as a verified 1.0 build yet.
 
-Windows Restart Manager is not used as the detection engine.
+## Source layout
 
-**Important:** An open file handle does not necessarily prevent
-deletion, renaming or movement. A scan with no matching handles
-does not guarantee that the file is unlocked.
+`src/scanner.cpp`: contained native handle enumeration and subprocess scanner protocol. `src/app.cpp`: simple Win32 UI and 2-second waiting. `tests/test_main.cpp`: unit tests plus deterministic file-holder integration tests. `.github/workflows/windows.yml`: build, test and PE checks.
 
-## Design principles
+See [architecture](docs/ARCHITECTURE.md), [testing](docs/TESTING.md) and [known limitations](docs/LIMITATIONS.md).
 
-- Native C++23 and Win32 API.
-- Windows 10 and Windows 11, x64.
-- One standalone executable.
-- Static MSVC runtime (/MT).
-- No .NET, external runtime or third-party framework.
-- No installer, driver or Windows service.
-- No internet connection required.
-- No telemetry.
-- No automatic background monitoring.
-- No forced process termination.
-- No forced closing of another process's handles.
-- No modification or deletion of user files.
-- Minimal executable size without sacrificing safety.
-
-## Development
-
-Preferred toolchain:
-
-- Visual Studio 2026 Build Tools.
-- Stable MSVC with C++23 support.
-- Windows SDK.
-- MSBuild.
-
-The build configuration and CI checks will be added
-alongside the implementation.
-
-Release readiness requires verified Windows 10/11
-compatibility, integration tests, PE dependency validation
-and security checks.
-
-## License
-
-Licensing has not yet been decided.
-No license has been granted by the repository owner.
+No license has been selected; do not assume permission to redistribute or relicense the sources.

@@ -1,0 +1,53 @@
+name: Windows native CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: lockpeek-ci-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  windows-x64:
+    runs-on: windows-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - name: Identify stable compiler and build Release x64
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $VsWhere="${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          if (!(Test-Path $VsWhere)) { throw 'VS Installer vswhere.exe not found' }
+          $Root=(& $VsWhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath | Select-Object -First 1)
+          if (!$Root) { throw 'C++ Build Tools not installed' }
+          $VcVars=Join-Path $Root 'VC\Auxiliary\Build\vcvars64.bat'
+          $Toolchain=(cmd /d /s /c "call `"$VcVars`" >nul && cl 2>&1") -join "`n"
+          Write-Host $Toolchain
+          if ($Toolchain -notmatch 'Version 19\.(\d+)') { throw 'Could not identify MSVC' }
+          if ([int]$Matches[1] -lt 52) { throw 'Stable MSVC 14.52+ with /std:c++23 is required. Runner toolchain is too old; no silent fallback.' }
+          $MSBuild=Join-Path $Root 'MSBuild\Current\Bin\MSBuild.exe'
+          if (!(Test-Path $MSBuild)) { throw 'MSBuild.exe not found' }
+          cmd /d /s /c "call `"$VcVars`" >nul && `"$MSBuild`" LockPeek.sln /m /t:Build /p:Configuration=Release /p:Platform=x64 /v:minimal"
+          if ($LASTEXITCODE -ne 0) { throw 'MSBuild failed' }
+      - name: Unit and integration tests (native handle enumeration)
+        shell: pwsh
+        run: |
+          New-Item -Force -ItemType Directory '.artifacts' | Out-Null
+          & .\x64\Release\LockPeekTests.exe 2>&1 | Tee-Object -FilePath '.artifacts/tests.txt'
+          if ($LASTEXITCODE -ne 0) { throw "LockPeekTests failed: $LASTEXITCODE" }
+      - name: Inspect PE, CRT imports, hardening and size
+        shell: pwsh
+        run: |
+          ./scripts/verify-release.ps1 -Exe (Resolve-Path './x64/Release/LockPeek.exe').Path -ReportDirectory '.artifacts'
+      - name: Publish unsigned build and diagnostics (not a GitHub Release)
+        uses: actions/upload-artifact@v4
+        with:
+          name: LockPeek-Windows-x64-unsigned
+          path: |
+            x64/Release/LockPeek.exe
+            .artifacts/**
+          if-no-files-found: error
+          retention-days: 14
