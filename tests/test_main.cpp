@@ -119,6 +119,11 @@ void UnitTests() {
           "reject extended GLOBALROOT device namespace");
     Check(NormalizePath(L"\\\\?\\Volume{11111111-1111-1111-1111-111111111111}\\x").empty(),
           "reject extended volume namespace rather than misresolve it");
+    ScanResult invalidMetadata{};
+    invalidMetadata.hits.push_back({0, 0, Match::Path, {}});
+    PopulateProcessNames(invalidMetadata);
+    Check(invalidMetadata.partial && invalidMetadata.hits.empty(),
+          "uninspectable process identity is marked incomplete and invalid PID removed");
 }
 void IntegrationTests() {
     wchar_t directory[MAX_PATH + 1]{};

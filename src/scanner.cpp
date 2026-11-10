@@ -424,6 +424,11 @@ ScanResult ScanHandles(const std::wstring& file) {
             result.partial = true;
         }
     }
+    // A PID is not a stable process identity. Missing creation time is
+    // evidence of a limitation, even when the file-object match succeeded.
+    for (const auto& hit : result.hits) {
+        if (!hit.creation) { result.partial = true; break; }
+    }
     return result;
 }
 
@@ -460,7 +465,10 @@ int RunScanWorker(const std::wstring& filename) {
 void PopulateProcessNames(ScanResult& result) {
     for (auto& hit : result.hits) {
         Handle process(OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, hit.pid));
-        if (!process.valid()) continue;
+        if (!process.valid()) {
+            result.partial = true; // cannot verify that the PID still denotes the same process
+            continue;
+        }
         const uint64_t now = CreationTime(process.get());
         if (hit.creation && now && hit.creation != now) { // PID reused between scan and display
             hit.pid = 0; // drop evidence rather than attributing it to the new process
