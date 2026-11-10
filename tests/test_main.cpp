@@ -45,11 +45,13 @@ struct Child {
     Child(const Child&) = delete;
     Child& operator=(const Child&) = delete;
 };
-bool LaunchHold(const std::wstring& filename, const std::wstring& ready, const std::wstring& stop, Child& child) {
+bool LaunchHold(const std::wstring& filename, const std::wstring& ready, const std::wstring& stop,
+                Child& child, bool shareDelete = false) {
     const auto exe = Self();
     std::wstring command = lockpeek::QuoteArgument(exe) + L" --hold " +
                            lockpeek::QuoteArgument(filename) + L" " +
-                           lockpeek::QuoteArgument(ready) + L" " + lockpeek::QuoteArgument(stop);
+                           lockpeek::QuoteArgument(ready) + L" " + lockpeek::QuoteArgument(stop) +
+                           (shareDelete ? L" --allow-delete" : L"");
     STARTUPINFOW si{}; si.cb = sizeof(si);
     PROCESS_INFORMATION pi{};
     if (!CreateProcessW(exe.c_str(), command.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW,
@@ -59,8 +61,10 @@ bool LaunchHold(const std::wstring& filename, const std::wstring& ready, const s
     child.pid = pi.dwProcessId;
     return true;
 }
-int HoldFile(const wchar_t* filename, const wchar_t* ready, const wchar_t* stop) {
-    Handle file(CreateFileW(filename, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE,
+int HoldFile(const wchar_t* filename, const wchar_t* ready, const wchar_t* stop, bool shareDelete) {
+    const DWORD sharing = FILE_SHARE_READ | FILE_SHARE_WRITE |
+                          (shareDelete ? FILE_SHARE_DELETE : 0u);
+    Handle file(CreateFileW(filename, GENERIC_READ, sharing,
                             nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr));
     if (!file.good()) return 3;
     Handle readyEvent(OpenEventW(EVENT_MODIFY_STATE, FALSE, ready));
@@ -84,6 +88,11 @@ void UnitTests() {
     Check(!ValidWire(wire), "reject invalid matching method");
     wire.hits[0].match = 1;
     Check(ValidWire(wire), "accept valid evidence");
+    wire.hits[0].pid = 0;
+    Check(!ValidWire(wire), "reject impossible zero PID");
+    wire.hits[0].pid = 120;
+    wire.hits[0].match = 2;
+    Check(ValidWire(wire), "accept heuristic path evidence");
     wire.flags = 0x80000000;
     Check(!ValidWire(wire), "reject undocumented flags");
     Check(sizeof(WireResult) == 56 + 16 * kMaxHits, "versioned IPC carries target file identity");
@@ -91,6 +100,8 @@ void UnitTests() {
     size_t count = 7;
     Check(!ValidateExtendedHandleBuffer(snap.data(), 15, count) && count == 0,
           "reject truncated extended-handle header");
+    Check(!ValidateExtendedHandleBuffer(nullptr, 56, count) && count == 0,
+          "reject null extended-handle data");
     uintptr_t handleCount = 2;
     std::memcpy(snap.data(), &handleCount, sizeof(handleCount));
     Check(!ValidateExtendedHandleBuffer(snap.data(), snap.size(), count), "reject bad native count");
@@ -100,6 +111,7 @@ void UnitTests() {
           "accept bounded native table");
     Check(QuoteArgument(L"a b\\") == L"\"a b\\\\\"", "escape spaces and trailing backslash");
     Check(QuoteArgument(L"a\"b") == L"\"a\\\"b\"", "escape inner quote");
+    Check(QuoteArgument(L"документ\\") == L"\"документ\\\\\"", "escape Cyrillic argument and trailing slash");
     Check(NormalizePath(L"") == L"", "reject empty path");
     Check(!NormalizePath(L"C:\\Тест файл.xlsx").empty(), "accept Unicode path");
     Check(NormalizePath(L"\\\\.\\PhysicalDrive0").empty(), "reject device namespace");
@@ -120,12 +132,20 @@ void IntegrationTests() {
     // Test data is created by this test, never an existing user document.
     const auto basename = std::wstring(L"Local\\LockPeek-") + std::to_wstring(GetCurrentProcessId()) + L"-" +
                           std::to_wstring(GetTickCount64());
-    const auto r1 = basename + L"-ready1", r2 = basename + L"-ready2", stop = basename + L"-stop";
+    const auto r1 = basename + L"-ready1", r2 = basename + L"-ready2",
+               r3 = basename + L"-ready3", stop = basename + L"-stop";
+    const std::wstring alias = path + L"-hardlink";
+    const bool hasHardlink = CreateHardLinkW(alias.c_str(), path.c_str(), nullptr) != FALSE;
+    if (!hasHardlink) std::printf("SKIP: hard link identity test (not supported on this volume)\n");
     Handle ready1(CreateEventW(nullptr, TRUE, FALSE, r1.c_str()));
     Handle ready2(CreateEventW(nullptr, TRUE, FALSE, r2.c_str()));
+    Handle ready3(CreateEventW(nullptr, TRUE, FALSE, r3.c_str()));
     Handle quit(CreateEventW(nullptr, TRUE, FALSE, stop.c_str()));
-    if (!ready1.good() || !ready2.good() || !quit.good()) {
-        Check(false, "create synchronization events"); DeleteFileW(path.c_str()); return;
+    if (!ready1.good() || !ready2.good() || !ready3.good() || !quit.good()) {
+        Check(false, "create synchronization events");
+        if (hasHardlink) DeleteFileW(alias.c_str());
+        DeleteFileW(path.c_str());
+        return;
     }
     {
         Child a, b;
@@ -153,13 +173,39 @@ void IntegrationTests() {
             }
             Check(foundA && foundB, "detect both holding processes by PID");
             Check(!result.hits.empty(), "return structured matching evidence");
+            if (hasHardlink) {
+                const auto alternate = lockpeek::RunIsolatedScan(alias, nullptr);
+                bool aliasA = false, aliasB = false;
+                for (const auto& hit : alternate.hits) {
+                    if (hit.pid == a.pid && hit.match == lockpeek::Match::FileId) aliasA = true;
+                    if (hit.pid == b.pid && hit.match == lockpeek::Match::FileId) aliasB = true;
+                }
+                Check(!alternate.win32Error && !alternate.timeout && aliasA && aliasB,
+                      "recognize holders through hard link by volume/file ID");
+            }
         }
         SetEvent(quit.get()); // Child destructors join and close process handles.
     }
     const auto cleared = lockpeek::RunIsolatedScan(path, nullptr);
     Check(!cleared.win32Error && !cleared.timeout, "recheck after holders exit");
     Check(cleared.hits.empty(), "no stale holders after processes exited");
-    DeleteFileW(path.c_str());
+    ResetEvent(quit.get());
+    {
+        Child permissive;
+        const bool launched = LaunchHold(path, r3, stop, permissive, true) &&
+                              WaitForSingleObject(ready3.get(), 10000) == WAIT_OBJECT_0;
+        Check(launched, "start holder that explicitly allows delete sharing");
+        if (launched) {
+            const auto scan = lockpeek::RunIsolatedScan(path, nullptr);
+            bool found = false;
+            for (const auto& hit : scan.hits) if (hit.pid == permissive.pid) found = true;
+            Check(!scan.win32Error && !scan.timeout && found,
+                  "report open handles even when deletion sharing is allowed");
+        }
+        SetEvent(quit.get());
+    }
+    if (hasHardlink) Check(DeleteFileW(alias.c_str()) != FALSE, "clean up test hard link");
+    Check(DeleteFileW(path.c_str()) != FALSE, "clean up temporary test file");
     const auto absent = lockpeek::RunIsolatedScan(path, nullptr);
     Check(absent.win32Error == ERROR_FILE_NOT_FOUND || absent.win32Error == ERROR_PATH_NOT_FOUND,
           "missing file reports precise error");
@@ -173,8 +219,10 @@ void IntegrationTests() {
 int wmain(int argc, wchar_t** argv) {
     if (argc == 3 && std::wstring(argv[1]) == L"--scan-worker")
         return lockpeek::RunScanWorker(argv[2]);
-    if (argc == 5 && std::wstring(argv[1]) == L"--hold")
-        return HoldFile(argv[2], argv[3], argv[4]);
+    if ((argc == 5 || argc == 6) && std::wstring(argv[1]) == L"--hold") {
+        if (argc == 6 && std::wstring(argv[5]) != L"--allow-delete") return 2;
+        return HoldFile(argv[2], argv[3], argv[4], argc == 6);
+    }
     UnitTests();
     IntegrationTests();
     std::printf("TOTAL FAILURES: %d\n", failures);

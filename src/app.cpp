@@ -217,13 +217,22 @@ class App {
             waitFileId_ = result_.targetFileId;
             waitIdentityPinned_ = true;
         }
-        if (waiting_ && hadMatches_ && waitIdentityPinned_ &&
-            result_.targetIdentityAvailable && result_.hits.empty() && !result_.partial &&
-            !result_.timeout && !result_.win32Error) {
+        // A previously unopenable file can become inspectable after its owner
+        // closes an exclusive handle. Do not wait forever just because we could
+        // not pin its ID in the initial scan. The weaker conclusion is explicitly
+        // labelled as path-based and never asserts release of the original file.
+        if (waiting_ && hadMatches_ && result_.targetIdentityAvailable &&
+            result_.hits.empty() && !result_.partial && !result_.timeout &&
+            !result_.win32Error) {
             waiting_ = false;
             KillTimer(window_, kWaitTimer);
-            ShowStatus(Text(L"Previously detected processes no longer have matching handles. Deletion is not guaranteed.",
-                            L"Ранее найденные процессы больше не удерживают обнаруженные дескрипторы. Удаление не гарантировано."));
+            if (waitIdentityPinned_) {
+                ShowStatus(Text(L"Previously detected processes no longer have matching handles. Deletion is not guaranteed.",
+                                L"Ранее найденные процессы больше не удерживают обнаруженные дескрипторы. Удаление не гарантировано."));
+            } else {
+                ShowStatus(Text(L"No matching handles remain at this path. The original file identity was not verified; it may have changed. Deletion is not guaranteed.",
+                                L"По этому пути совпадающих дескрипторов больше нет. Исходная идентичность файла не подтверждена; он мог измениться. Удаление не гарантировано."));
+            }
         }
         if (!result_.hits.empty()) hadMatches_ = true;
         UpdateButtons();
