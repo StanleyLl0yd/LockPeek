@@ -14,11 +14,15 @@
     <CharacterSet>Unicode</CharacterSet>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+  <PropertyGroup>
+    <LockPeekCxxStandard Condition="'$(UsePreviewCxx23)'=='true'">/std:c++23preview</LockPeekCxxStandard>
+    <LockPeekCxxStandard Condition="'$(UsePreviewCxx23)'!='true'">/std:c++23</LockPeekCxxStandard>
+  </PropertyGroup>
   <PropertyGroup><OutDir>$(SolutionDir)$(Platform)\Release\</OutDir><IntDir>$(OutDir)tests-obj\</IntDir><TargetName>LockPeekTests</TargetName></PropertyGroup>
   <ItemDefinitionGroup>
     <ClCompile><WarningLevel>Level4</WarningLevel><TreatWarningAsError>true</TreatWarningAsError>
       <RuntimeLibrary>MultiThreaded</RuntimeLibrary><ConformanceMode>true</ConformanceMode>
-      <AdditionalOptions>/std:c++23 /GS /GR- /EHsc /utf-8 %(AdditionalOptions)</AdditionalOptions>
+      <AdditionalOptions>$(LockPeekCxxStandard) /GS /GR- /EHsc /utf-8 %(AdditionalOptions)</AdditionalOptions>
       <PreprocessorDefinitions>UNICODE;_UNICODE;_WIN32_WINNT=0x0A00;%(PreprocessorDefinitions)</PreprocessorDefinitions>
     </ClCompile>
     <Link><SubSystem>Console</SubSystem><AdditionalDependencies>kernel32.lib;advapi32.lib;%(AdditionalDependencies)</AdditionalDependencies></Link>

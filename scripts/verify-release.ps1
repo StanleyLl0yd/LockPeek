@@ -1,6 +1,7 @@
 param(
   [Parameter(Mandatory=$true)][string]$Exe,
-  [Parameter(Mandatory=$true)][string]$ReportDirectory
+  [Parameter(Mandatory=$true)][string]$ReportDirectory,
+  [switch]$AllowProvisionalToolchain
 )
 $ErrorActionPreference='Stop'
 New-Item -Force -ItemType Directory $ReportDirectory | Out-Null
@@ -17,7 +18,9 @@ if (!(Test-Path $VcVars)) { throw 'Missing vcvars64.bat' }
 $Toolchain=cmd /d /s /c "call `"$VcVars`" >nul && cl 2>&1" 2>&1 | Out-String
 if ($Toolchain -notmatch 'Version 19\.(\d+)') { throw "Unable to identify cl.exe: $Toolchain" }
 $Minor=[int]$Matches[1]
-if ($Minor -lt 52) { throw "MSVC 14.52+ with stable /std:c++23 is required, got 19.$Minor" }
+$Provisional=$Minor -eq 51 -and $AllowProvisionalToolchain
+if ($Minor -lt 52 -and !$Provisional) { throw "Stable MSVC 14.52+ is required for release, got 19.$Minor" }
+if ($Provisional) { Write-Warning 'PROVISIONAL: compiler uses C++23 preview; this is not a release-qualified build.' }
 $Dependencies=(cmd /d /s /c "call `"$VcVars`" >nul && dumpbin /dependents `"$Exe`"") -join "`n"
 $Headers=(cmd /d /s /c "call `"$VcVars`" >nul && dumpbin /headers `"$Exe`"") -join "`n"
 $LoadConfig=(cmd /d /s /c "call `"$VcVars`" >nul && dumpbin /loadconfig `"$Exe`"") -join "`n"
@@ -45,7 +48,7 @@ $Metadata=@(
   "Size: $Bytes bytes",
   'Architecture: x64',
   "Compiler: $CompilerLine",
-  'Language: C++23 (/std:c++23)',
+  ($(if ($Provisional) { 'Language: C++23 preview (/std:c++23preview), NOT RELEASE-QUALIFIED' } else { 'Language: C++23 (/std:c++23)' })),
   'CRT: static (/MT; dynamically imported VC++ CRT blocked)',
   "SHA256: $Hash"
 )

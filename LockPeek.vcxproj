@@ -20,6 +20,10 @@
     <UseDebugLibraries>true</UseDebugLibraries><CharacterSet>Unicode</CharacterSet>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+  <PropertyGroup>
+    <LockPeekCxxStandard Condition="'$(UsePreviewCxx23)'=='true'">/std:c++23preview</LockPeekCxxStandard>
+    <LockPeekCxxStandard Condition="'$(UsePreviewCxx23)'!='true'">/std:c++23</LockPeekCxxStandard>
+  </PropertyGroup>
   <PropertyGroup><OutDir>$(SolutionDir)$(Platform)\$(Configuration)\</OutDir><IntDir>$(OutDir)obj\</IntDir><TargetName>LockPeek</TargetName></PropertyGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)'=='Release'">
     <ClCompile>
@@ -27,7 +31,7 @@
       <Optimization>MinSpace</Optimization><FunctionLevelLinking>true</FunctionLevelLinking>
       <IntrinsicFunctions>true</IntrinsicFunctions><RuntimeLibrary>MultiThreaded</RuntimeLibrary>
       <SDLCheck>true</SDLCheck><ConformanceMode>true</ConformanceMode>
-      <AdditionalOptions>/std:c++23 /GL /Gy /Gw /GF /GS /GR- /EHsc /utf-8 /guard:cf %(AdditionalOptions)</AdditionalOptions>
+      <AdditionalOptions>$(LockPeekCxxStandard) /GL /Gy /Gw /GF /GS /GR- /EHsc /utf-8 /guard:cf %(AdditionalOptions)</AdditionalOptions>
       <PreprocessorDefinitions>UNICODE;_UNICODE;_WIN32_WINNT=0x0A00;%(PreprocessorDefinitions)</PreprocessorDefinitions>
     </ClCompile>
     <Link>
@@ -44,7 +48,7 @@
       <WarningLevel>Level4</WarningLevel><TreatWarningAsError>true</TreatWarningAsError>
       <Optimization>Disabled</Optimization><RuntimeLibrary>MultiThreadedDebug</RuntimeLibrary>
       <SDLCheck>true</SDLCheck><ConformanceMode>true</ConformanceMode>
-      <AdditionalOptions>/std:c++23 /GS /GR- /EHsc /utf-8 %(AdditionalOptions)</AdditionalOptions>
+      <AdditionalOptions>$(LockPeekCxxStandard) /GS /GR- /EHsc /utf-8 %(AdditionalOptions)</AdditionalOptions>
       <PreprocessorDefinitions>UNICODE;_UNICODE;_WIN32_WINNT=0x0A00;%(PreprocessorDefinitions)</PreprocessorDefinitions>
     </ClCompile>
     <Link><SubSystem>Windows</SubSystem><GenerateManifest>false</GenerateManifest>

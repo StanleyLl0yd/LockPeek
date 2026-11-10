@@ -27,10 +27,20 @@ jobs:
           $Toolchain=(cmd /d /s /c "call `"$VcVars`" >nul && cl 2>&1") -join "`n"
           Write-Host $Toolchain
           if ($Toolchain -notmatch 'Version 19\.(\d+)') { throw 'Could not identify MSVC' }
-          if ([int]$Matches[1] -lt 52) { throw 'Stable MSVC 14.52+ with /std:c++23 is required. Runner toolchain is too old; no silent fallback.' }
+          $minor=[int]$Matches[1]
+          if ($minor -ge 52) {
+            $Preview='false'
+            Write-Host 'Stable C++23 target selected: /std:c++23'
+          } elseif ($minor -eq 51) {
+            $Preview='true'
+            Write-Warning 'Provisional testing on stable MSVC 14.51 with /std:c++23preview. Not an accepted C++23 release build.'
+          } else {
+            throw 'MSVC 14.51+ is required for provisional C++23 testing, 14.52+ for final release.'
+          }
+          "LOCKPEEK_PREVIEW=$Preview" >> $env:GITHUB_ENV
           $MSBuild=Join-Path $Root 'MSBuild\Current\Bin\MSBuild.exe'
           if (!(Test-Path $MSBuild)) { throw 'MSBuild.exe not found' }
-          cmd /d /s /c "call `"$VcVars`" >nul && `"$MSBuild`" LockPeek.sln /m /t:Build /p:Configuration=Release /p:Platform=x64 /v:minimal"
+          cmd /d /s /c "call `"$VcVars`" >nul && `"$MSBuild`" LockPeek.sln /m /t:Build /p:Configuration=Release /p:Platform=x64 /p:UsePreviewCxx23=$Preview /v:minimal"
           if ($LASTEXITCODE -ne 0) { throw 'MSBuild failed' }
       - name: Unit and integration tests (native handle enumeration)
         shell: pwsh
@@ -41,7 +51,7 @@ jobs:
       - name: Inspect PE, CRT imports, hardening and size
         shell: pwsh
         run: |
-          ./scripts/verify-release.ps1 -Exe (Resolve-Path './x64/Release/LockPeek.exe').Path -ReportDirectory '.artifacts'
+          ./scripts/verify-release.ps1 -Exe (Resolve-Path './x64/Release/LockPeek.exe').Path -ReportDirectory '.artifacts' -AllowProvisionalToolchain:($env:LOCKPEEK_PREVIEW -eq 'true')
       - name: Publish unsigned build and diagnostics (not a GitHub Release)
         uses: actions/upload-artifact@v4
         with:
