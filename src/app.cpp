@@ -32,6 +32,9 @@ constexpr int kRetry = 102;
 constexpr int kWait = 103;
 constexpr int kCopy = 104;
 constexpr int kElevate = 105;
+constexpr int kStatusSummary = 106;
+constexpr int kStatusDetails = 107;
+constexpr int kProcessList = 108;
 
 class App {
     HINSTANCE instance_;
@@ -534,7 +537,7 @@ private:
             file_ = Make(L"EDIT", L"", ES_AUTOHSCROLL | ES_READONLY, 0, WS_EX_CLIENTEDGE);
             choose_ = Make(L"BUTTON", Text(L"Choose file", L"Выбрать файл"), WS_TABSTOP | BS_PUSHBUTTON, kChoose);
             section_ = Make(L"STATIC", Text(L"DETECTED PROCESSES", L"ОБНАРУЖЕННЫЕ ПРОЦЕССЫ"), SS_LEFT);
-            list_ = Make(WC_LISTVIEWW, L"", LVS_REPORT | LVS_SINGLESEL | LVS_SHOWSELALWAYS, 0, WS_EX_CLIENTEDGE);
+            list_ = Make(WC_LISTVIEWW, L"", LVS_REPORT | LVS_SINGLESEL | LVS_SHOWSELALWAYS, kProcessList, WS_EX_CLIENTEDGE);
             ListView_SetExtendedListViewStyle(list_, LVS_EX_FULLROWSELECT | LVS_EX_DOUBLEBUFFER |
                                                       LVS_EX_LABELTIP);
             const wchar_t* headersEn[] = {L"Process", L"PID", L"Match", L"Executable path"};
@@ -548,10 +551,10 @@ private:
                 ListView_InsertColumn(list_, i, &col);
             }
             statusPanel_ = Make(L"STATIC", L"", SS_WHITERECT);
-            status_ = Make(L"STATIC", Text(L"No file selected", L"Файл не выбран"), SS_LEFT);
+            status_ = Make(L"STATIC", Text(L"No file selected", L"Файл не выбран"), SS_LEFT, kStatusSummary);
             statusDetails_ = Make(L"STATIC",
                 Text(L"Choose a file above or drop it onto the window.",
-                     L"Выберите файл выше или перетащите его в окно."), SS_LEFT);
+                     L"Выберите файл выше или перетащите его в окно."), SS_LEFT, kStatusDetails);
             retry_ = Make(L"BUTTON", Text(L"Scan again", L"Проверить снова"), WS_TABSTOP | BS_PUSHBUTTON, kRetry);
             wait_ = Make(L"BUTTON", Text(L"Wait for release", L"Ждать освобождения"), WS_TABSTOP | BS_PUSHBUTTON, kWait);
             copy_ = Make(L"BUTTON", Text(L"Copy report", L"Копировать отчёт"), WS_TABSTOP | BS_PUSHBUTTON, kCopy);
