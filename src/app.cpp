@@ -11,6 +11,7 @@
 #include <cstdint>
 #include <cstring>
 #include <memory>
+#include <mutex>
 #include <new>
 #include <iterator>
 #include <string>
@@ -41,6 +42,11 @@ class App {
     std::wstring selected_;
     ScanResult result_{};
     std::thread thread_;
+    // Cross-thread results stay in process-owned memory; no pointer travels in
+    // a WM_APP message that another process could forge.
+    std::mutex resultMutex_;
+    std::unique_ptr<ScanResult> pendingResult_;
+    uint64_t pendingGeneration_ = 0;
     volatile LONG stop_ = 0;
     bool busy_ = false;
     bool pending_ = false;
@@ -265,10 +271,14 @@ class App {
                     scan.reset(new (std::nothrow) ScanResult{});
                     if (scan) { scan->win32Error = ERROR_GEN_FAILURE; scan->partial = true; }
                 }
-                if (!PostMessageW(destination, kResultMessage,
-                                  static_cast<WPARAM>(currentGeneration),
-                                  reinterpret_cast<LPARAM>(scan.get()))) return;
-                scan.release();
+                {
+                    std::lock_guard<std::mutex> lock(resultMutex_);
+                    pendingGeneration_ = currentGeneration;
+                    pendingResult_ = std::move(scan);
+                }
+                // Only a wakeup token is posted, never a heap pointer.
+                PostMessageW(destination, kResultMessage,
+                             static_cast<WPARAM>(currentGeneration), 0);
             });
         } catch (...) {
             busy_ = false;
@@ -514,12 +524,15 @@ private:
             if (w == kWaitTimer && waiting_ && !busy_) Start();
             return 0;
         case kResultMessage: {
-            std::unique_ptr<ScanResult> incoming(reinterpret_cast<ScanResult*>(l));
-            if (static_cast<uint64_t>(w) == generation_) {
-                if (incoming) result_ = std::move(*incoming);
-                else { result_ = {}; result_.win32Error = ERROR_NOT_ENOUGH_MEMORY; result_.partial = true; }
-                Finish();
+            if (l != 0 || static_cast<uint64_t>(w) != generation_) return 0;
+            std::unique_ptr<ScanResult> incoming;
+            {
+                std::lock_guard<std::mutex> lock(resultMutex_);
+                if (pendingGeneration_ != generation_ || !pendingResult_) return 0;
+                incoming = std::move(pendingResult_);
             }
+            result_ = std::move(*incoming);
+            Finish();
             return 0;
         }
         case WM_CLOSE:
@@ -531,11 +544,10 @@ private:
         case WM_DESTROY: {
             InterlockedExchange(&stop_, 1);
             if (thread_.joinable()) thread_.join();
-            // A worker may have posted while WM_DESTROY was joining it.
-            // Remove and free any result payloads that the loop won't consume.
+            // Drain notifications; their LPARAM never carries owned memory.
+            // The process-owned pendingResult_ is destroyed with App.
             MSG pending{};
-            while (PeekMessageW(&pending, h, kResultMessage, kResultMessage, PM_REMOVE))
-                delete reinterpret_cast<ScanResult*>(pending.lParam);
+            while (PeekMessageW(&pending, h, kResultMessage, kResultMessage, PM_REMOVE)) {}
             PostQuitMessage(0);
             return 0;
         }

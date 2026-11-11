@@ -80,6 +80,12 @@ jobs:
             $workingSet=$proc.WorkingSet64
             $privateBytes=$proc.PrivateMemorySize64
             $windowHandle=$proc.MainWindowHandle
+            if (!$windowHandle) { throw 'GUI main window handle not found' }
+            & .\\x64\\Release\\LockPeekTests.exe --gui-message-smoke "$windowHandle"
+            if ($LASTEXITCODE -ne 0) { throw "External window message smoke failed: $LASTEXITCODE" }
+            Start-Sleep -Milliseconds 400
+            $proc.Refresh()
+            if ($proc.HasExited) { throw "GUI crashed after untrusted window message: $($proc.ExitCode)" }
             $report=@(
               'Hosted Windows Server GUI smoke (not clean Win10/11 qualification)',
               "Working set: $workingSet bytes",
