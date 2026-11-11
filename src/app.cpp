@@ -227,12 +227,18 @@ class App {
         // closes an exclusive handle. Do not wait forever just because we could
         // not pin its ID in the initial scan. The weaker conclusion is explicitly
         // labelled as path-based and never asserts release of the original file.
-        if (waiting_ && hadMatches_ && result_.targetIdentityAvailable &&
-            result_.hits.empty() && !result_.partial && !result_.timeout &&
-            !result_.win32Error) {
+        if (waiting_ && hadMatches_ && NoMatchingHandlesObserved(result_)) {
             waiting_ = false;
             KillTimer(window_, kWaitTimer);
-            if (waitIdentityPinned_) {
+            if (result_.partial || result_.inaccessible || result_.uninspectable) {
+                if (waitIdentityPinned_) {
+                    ShowStatus(Text(L"Previously seen matching handles are no longer visible, but the scan was incomplete. The file may still be held; deletion is not guaranteed.",
+                                    L"Ранее найденные дескрипторы больше не видны, но проверка неполная. Файл всё ещё может удерживаться; удаление не гарантировано."));
+                } else {
+                    ShowStatus(Text(L"No matching handles visible at this path; scan incomplete and original file identity unknown. It may have changed or still be held.",
+                                    L"По этому пути дескрипторы не видны; проверка неполная, исходный файл не опознан. Он мог измениться или всё ещё удерживаться."));
+                }
+            } else if (waitIdentityPinned_) {
                 ShowStatus(Text(L"Previously detected processes no longer have matching handles. Deletion is not guaranteed.",
                                 L"Ранее найденные процессы больше не удерживают обнаруженные дескрипторы. Удаление не гарантировано."));
             } else {

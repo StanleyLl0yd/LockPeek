@@ -217,6 +217,11 @@ bool ValidateExtendedHandleBuffer(const void* data, size_t bytes, size_t& count)
     return true;
 }
 
+bool NoMatchingHandlesObserved(const ScanResult& result) noexcept {
+    return result.targetIdentityAvailable && result.hits.empty() &&
+           !result.win32Error && !result.timeout && !result.canceled && !result.truncated;
+}
+
 bool ValidWire(const WireResult& w) noexcept {
     if (w.magic != kMagic || w.size != sizeof(WireResult) || w.count > kMaxHits) return false;
     if (w.flags & ~7u) return false;

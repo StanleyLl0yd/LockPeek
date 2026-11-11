@@ -61,6 +61,8 @@ struct WireResult {
 static_assert(sizeof(WireHit) == 16);
 static_assert(sizeof(WireResult) == 56 + 16 * kMaxHits);
 
+// A weak observation only: an incomplete scan cannot prove release.
+bool NoMatchingHandlesObserved(const ScanResult& result) noexcept;
 bool ValidWire(const WireResult& w) noexcept;
 bool ValidateExtendedHandleBuffer(const void* data, size_t bytes, size_t& count) noexcept;
 std::wstring NormalizePath(const std::wstring& path);

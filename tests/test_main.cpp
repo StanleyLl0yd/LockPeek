@@ -128,6 +128,26 @@ void UnitTests() {
           "reject extended GLOBALROOT device namespace");
     Check(NormalizePath(L"\\\\?\\Volume{11111111-1111-1111-1111-111111111111}\\x").empty(),
           "reject extended volume namespace rather than misresolve it");
+    ScanResult observed{};
+    Check(!NoMatchingHandlesObserved(observed), "waiting does not infer release without file identity");
+    observed.targetIdentityAvailable = true;
+    Check(NoMatchingHandlesObserved(observed), "waiting can notice absence of observed holders");
+    observed.partial = true;
+    Check(NoMatchingHandlesObserved(observed), "waiting may report qualified absence with partial scan");
+    observed.hits.push_back({321, 0, Match::Path, {}});
+    Check(!NoMatchingHandlesObserved(observed), "waiting does not report absence with a matching holder");
+    observed.hits.clear();
+    observed.timeout = true;
+    Check(!NoMatchingHandlesObserved(observed), "waiting ignores timed out scan");
+    observed.timeout = false;
+    observed.canceled = true;
+    Check(!NoMatchingHandlesObserved(observed), "waiting ignores canceled scan");
+    observed.canceled = false;
+    observed.truncated = true;
+    Check(!NoMatchingHandlesObserved(observed), "waiting ignores truncated scan");
+    observed.truncated = false;
+    observed.win32Error = ERROR_ACCESS_DENIED;
+    Check(!NoMatchingHandlesObserved(observed), "waiting ignores error scans");
     ScanResult invalidMetadata{};
     invalidMetadata.hits.push_back({0, 0, Match::Path, {}});
     PopulateProcessNames(invalidMetadata);

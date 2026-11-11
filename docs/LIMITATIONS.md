@@ -14,3 +14,5 @@
 - No background service, Explorer context integration, shell extension, scheduled monitoring, forced unlock or process termination UI.
 
 - When the initially selected file cannot be opened even for attributes (e.g. exclusive sharing), LockPeek cannot pin its file ID. A later complete scan may report that matching handles are no longer visible **at the path**, but cannot prove the original file identity survived in the meantime. The message is explicitly weaker than a pinned-ID result.
+
+- A partial scan may show that previously detected handles are no longer visible and stop polling with an **explicitly uncertain** notice; this is not proof of release. Errors, timeouts, truncation, and missing target identity never trigger this observation. Manual Win10/11 GUI verification remains required.
