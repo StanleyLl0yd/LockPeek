@@ -246,6 +246,10 @@ class App {
                 swprintf_s(number, L" (NTSTATUS 0x%08X)", result_.ntstatus);
                 summary += number;
             }
+        } else if (result_.hits.empty() &&
+                   (result_.partial || result_.truncated || result_.inaccessible || result_.uninspectable)) {
+            summary = Text(L"Scan incomplete: no confirmed matches",
+                           L"Проверка неполная: совпадения не подтверждены");
         } else if (result_.hits.empty()) {
             summary = Text(L"No matching file handles found", L"Совпадающие дескрипторы не найдены");
         } else {
@@ -415,6 +419,10 @@ class App {
                        Text(L"Path (heuristic)", L"Путь (эвристика)")) +
                       (hit.service.empty() ? L"" :
                        std::wstring(Text(L" | Service: ", L" | Служба: ")) + hit.service) + L"\r\n";
+        }
+        if (result_.timeout) {
+            report += Text(L"Scan timed out. Results incomplete.\r\n",
+                           L"Время проверки истекло. Результат неполный.\r\n");
         }
         if (result_.win32Error) {
             report += Text(L"Windows error: ", L"Ошибка Windows: ") +
