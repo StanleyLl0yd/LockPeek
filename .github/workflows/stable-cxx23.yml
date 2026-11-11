@@ -8,12 +8,12 @@ concurrency:
   cancel-in-progress: true
 jobs:
   stable-cxx23:
-    if: ${{ github.event.pull_request.head.repo.full_name == github.repository }}
     runs-on: windows-2025
     timeout-minutes: 70
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
+          repository: ${{ github.event.pull_request.head.repo.full_name }}
           ref: ${{ github.event.pull_request.head.sha }}
       - name: Verify exact PR SHA
         shell: pwsh
@@ -77,6 +77,32 @@ jobs:
         run: |
           & .\x64\Release\LockPeekTests.exe 2>&1 | Tee-Object -FilePath '.artifacts/stable-tests.txt'
           if ($LASTEXITCODE -ne 0) { throw "Native tests failed: $LASTEXITCODE" }
+      - name: Stable-built GUI startup and forged-message smoke
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $exe=(Resolve-Path './x64/Release/LockPeek.exe').Path
+          $proc=Start-Process -FilePath $exe -PassThru
+          try {
+            Start-Sleep -Milliseconds 1600
+            $proc.Refresh()
+            if ($proc.HasExited) { throw "Stable-built GUI exited on startup: $($proc.ExitCode)" }
+            $handle=$proc.MainWindowHandle
+            if (!$handle) { throw 'Stable-built GUI has no main window' }
+            & .\x64\Release\LockPeekTests.exe --gui-message-smoke "$handle"
+            if ($LASTEXITCODE -ne 0) { throw 'Forged window-message smoke failed' }
+            Start-Sleep -Milliseconds 400
+            $proc.Refresh()
+            if ($proc.HasExited) { throw "Stable-built GUI crashed: $($proc.ExitCode)" }
+          } finally {
+            $proc.Refresh()
+            if (!$proc.HasExited) {
+              if (!$proc.CloseMainWindow() -or !$proc.WaitForExit(5000)) {
+                Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+              }
+            }
+            $proc.Dispose()
+          }
       - name: Upload stable-compiler unsigned artifact (not a release)
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:

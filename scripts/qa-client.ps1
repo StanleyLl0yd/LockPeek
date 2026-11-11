@@ -37,7 +37,7 @@ $uninstallKeys = @(
 )
 $redist = @(
   Get-ItemProperty -Path $uninstallKeys -ErrorAction SilentlyContinue |
-    Where-Object { $_.DisplayName -match '^Microsoft Visual C\+\+.*Redistributable' } |
+    Where-Object { $_.PSObject.Properties['DisplayName'] -and $_.DisplayName -match '^Microsoft Visual C\+\+.*Redistributable' } |
     Select-Object -ExpandProperty DisplayName -Unique
 )
 New-Item -ItemType Directory -Force -Path $ReportDirectory | Out-Null
@@ -85,7 +85,6 @@ $report = [ordered]@{
   osBuild = $os.BuildNumber
   clientFamily = $family
   x64Hardware = $true
-  machineName = $env:COMPUTERNAME
   powershellVersion = $PSVersionTable.PSVersion.ToString()
   executableSha256 = $actualHash
   executableBytes = (Get-Item -LiteralPath $exePath).Length

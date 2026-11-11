@@ -8,11 +8,32 @@ GitHub Actions is configured to build Win32 x64 with `/MT`, run these tests, val
 
 ## Provisional Windows verification (11 November 2026)
 
-- [Exact-head Windows CI #12](https://github.com/StanleyLl0yd/LockPeek/actions/runs/42968161722): successful build, 35/35 unit and integration tests PASS, PE/CRT/CFG/ASLR/DEP checks PASS, CI artifact uploaded.
-- Windows Server 2025 hosted runner, Visual Studio 2026/MSVC 19.51.36260, development-only `/std:c++23preview`.
-- Executable: 229,376 bytes (224 KiB). Imports: KERNEL32, USER32, GDI32, COMCTL32, COMDLG32, SHELL32, ADVAPI32. No dynamic VC++ CRT imports. Embedded application manifest independently inspected.
-- Integration PASS includes one/two holders, hard-link alias, holders disappearing after release, delete-sharing semantics, missing-file error, cancellation, and Unicode filenames.
-- Expected confidence limitation: the runner reported inaccessible/uninspectable third-party handles, so its results correctly carry the partial flag. Found test holders were still matched by volume/file ID.
+- [Exact-head Windows CI #20](https://github.com/StanleyLl0yd/LockPeek/actions/runs/42992621400) passed **47/47** native unit/integration checks on PR head `18b3273598ccb51391fea5d5ee3e72e33e99ea60`, including the bounded IPC scanner, waiting uncertainty gates, Unicode, two holders, hard links, delete sharing, missing files and cancellation.
+- Windows Server 2025 hosted runner; Visual Studio 2026/MSVC 19.51.36260, **provisional** `/std:c++23preview`.
+- Executable: 230,400 bytes; only seven Windows system DLL imports. No dynamic VC++ CRT imports; manifest/CFG/ASLR/DEP checks passed. GUI idle startup and forged-message smoke passed on the server runner. The binary's SHA-256 must be read from the corresponding run's `build-info.txt`.
+- **None** of these checks qualifies a clean Windows 10/11 client deployment or a stable 14.52+ C++23 build.
+
+## Client Windows 10/11 evidence procedure
+
+Use two fresh **x64 client** virtual machines, Windows 10 22H2 and Windows 11. Install neither a standalone VC++ Redistributable nor an additional .NET SDK/Desktop Runtime before the first LockPeek test. Use the **same** unsigned EXE from a single, exact-head, stable-MSVC qualification artifact. Keep its `build-info.txt` and SHA-256. A registry software listing alone cannot establish that an image is clean.
+
+Copy `scripts/qa-client.ps1` to each VM and run from an ordinary, **non-elevated** PowerShell console (substitute the artifact's SHA-256):
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\qa-client.ps1 -Exe .\LockPeek.exe -ExpectedSha256 YOUR_64_CHARACTER_SHA256 -ReportDirectory .\qa-evidence
+```
+
+The script rejects a hash mismatch, Windows Server and non-x64 machines, then starts the GUI, verifies a main window, samples idle CPU/memory and writes `Windows-10-preflight.json` or `Windows-11-preflight.json`. **An automated preflight PASS is never manual QA acceptance.** Record OS build numbers, screenshot/video evidence and the two JSON reports. Test the following manually on **both** machines:
+
+1. Cold startup and ordinary user operation without separately installed runtimes; no installation or external DLL required.
+2. File picker, Explorer drag/drop, a quoted CLI path, keyboard focus/navigation, clipboard report, manual recheck.
+3. RU/EN UI, Cyrillic/non-ASCII names, spaces, very long paths, and 100%/150%/200% DPI.
+4. Two file-holder processes, delete-sharing case, inaccessible/protected holders, missing/deleted/replaced file, path identity, and explicit partial/incomplete notices.
+5. Wait and cancel, holder release, timed-out or partial scans, slow paths/filters, and error handling; never report that deletion is guaranteed safe.
+6. Explicit UAC acceptance and user-cancelled UAC. Elevated drag/drop from unelevated Explorer may be blocked by UIPI; it must not be represented as supported.
+7. Idle and scanning CPU/memory, GUI responsiveness, and absence of orphaned scanner workers after normal completion/cancellation.
+
+For every test, record PASS/FAIL/NOT-TESTED with screenshots or a reproducible note. Attach both VM reports and the manual test matrix to PR #1. The release gate is **not** closed when any mandatory case is missing.
 
 ## Remaining release blockers and manual QA
 

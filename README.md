@@ -29,9 +29,11 @@ For a **provisional MSVC 14.51 development run only**, append `/p:UsePreviewCxx2
 
 ## Status
 
-**Provisional development CI: PASS; not a release-qualified build.** On 11 November 2026, [Windows CI #12](https://github.com/StanleyLl0yd/LockPeek/actions/runs/42968161722) checked out exact PR head `a84bd67a`, built both x64 executables and passed all 35 native unit/integration checks on a Windows Server 2025 runner. MSVC 19.51.36260 used the explicitly provisional `/std:c++23preview` mode. The EXE is **229,376 bytes (224 KiB)**, imports only seven Windows system DLLs, and has static CRT, CFG, ASLR and DEP checks passing.
+**Provisional CI PASS; release qualification NOT COMPLETE.** [Windows CI #20](https://github.com/StanleyLl0yd/LockPeek/actions/runs/42992621400), on PR head `18b3273598ccb51391fea5d5ee3e72e33e99ea60` (11 November 2026), built Release x64 on hosted Windows Server 2025 and passed **47/47** unit/integration checks, static CRT/import/CFG/ASLR/DEP verification, and GUI/forged-window-message smoke. Its compiler was **MSVC 19.51.36260** with provisional `/std:c++23preview`, **not a release-qualified build**. Each uploaded binary has its own SHA-256 reported in the artifact's `build-info.txt`; hashes can differ between builds.
 
-**Outstanding release blockers:** a build with *confirmed stable* MSVC 14.52+ under `/std:c++23`, manual clean Windows 10 and Windows 11 x64 QA (especially GUI, UAC, waiting and paths), and idle RAM/CPU measurement. CI coverage does not prove clean-machine compatibility. Do not publish a GitHub Release without separate authorization.
+An additional [Stable MSVC C++23 qualification workflow](.github/workflows/stable-cxx23.yml) attempts to update the runner's Visual Studio 2026 Stable installation and fails closed unless MSVC **19.52+** builds/tests under `/std:c++23`. Its result must be checked independently; the existing green provisional CI does not satisfy this gate.
+
+**Remaining release gates:** (1) passing exact-head stable MSVC 14.52+ build/tests and PE verification, (2) real clean Windows 10 and Windows 11 x64 client QA with evidence, (3) required checks in the active `lockpeek-main` ruleset, and (4) final exact-head repository-wide verification. `scripts/qa-client.ps1` automates only the client startup/hash/idle preflight; the manual tasks in `docs/TESTING.md` remain mandatory. No GitHub Release without explicit authorization.
 
 ## Source layout
 

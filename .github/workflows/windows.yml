@@ -24,6 +24,17 @@ jobs:
         run: |
           $actual=(git rev-parse HEAD).Trim()
           if ($actual -ne $env:EXPECTED_SHA) { throw "Checked out $actual instead of expected $env:EXPECTED_SHA" }
+      - name: Parse client QA PowerShell script
+        shell: pwsh
+        run: |
+          $tokens=$null
+          $errors=$null
+          [System.Management.Automation.Language.Parser]::ParseFile(
+            (Resolve-Path 'scripts/qa-client.ps1').Path,
+            [ref]$tokens,
+            [ref]$errors
+          ) | Out-Null
+          if ($errors) { throw ($errors | Out-String) }
       - name: Identify stable compiler and build Release x64
         id: build
         shell: pwsh
