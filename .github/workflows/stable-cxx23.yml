@@ -33,7 +33,8 @@ jobs:
             throw 'Visual Studio Installer is unavailable'
           }
           $all = & $vswhere -all -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -format json | Out-String | ConvertFrom-Json
-          $stable = @($all | Where-Object { $_.channelId -eq 'VisualStudio.18.Stable' } | Sort-Object installationVersion -Descending)[0]
+          Write-Host "VS instances: $($all | Select-Object installationVersion, channelId, channelUri, isPrerelease | ConvertTo-Json -Depth 4 -Compress)"
+          $stable = @($all | Where-Object { ([version]$_.installationVersion).Major -eq 18 -and !$_.isPrerelease } | Sort-Object installationVersion -Descending)[0]
           if (!$stable) { throw 'Visual Studio 2026 Stable C++ installation is unavailable' }
           $root = $stable.installationPath
           Write-Host "Current Stable VS: $($stable.installationVersion) at $root"
@@ -43,7 +44,7 @@ jobs:
             throw "Stable VS update failed: exit code $($process.ExitCode)"
           }
           $after = & $vswhere -all -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -format json | Out-String | ConvertFrom-Json
-          $stable = @($after | Where-Object { $_.channelId -eq 'VisualStudio.18.Stable' } | Sort-Object installationVersion -Descending)[0]
+          $stable = @($after | Where-Object { ([version]$_.installationVersion).Major -eq 18 -and !$_.isPrerelease } | Sort-Object installationVersion -Descending)[0]
           if (!$stable -or ([version]$stable.installationVersion -lt [version]'18.12')) {
             throw 'Stable Visual Studio 2026 18.12+ not installed'
           }
@@ -58,7 +59,7 @@ jobs:
           "LOCKPEEK_STABLE_VCVARS=$vcvars" >> $env:GITHUB_ENV
           "LOCKPEEK_STABLE_MSBUILD=$(Join-Path $root 'MSBuild\Current\Bin\MSBuild.exe')" >> $env:GITHUB_ENV
           New-Item -ItemType Directory -Force '.artifacts' | Out-Null
-          @("VS Stable: $($stable.installationVersion)", $toolchain, "PR SHA: $env:GITHUB_SHA") |
+          @("VS Stable: $($stable.installationVersion)", $toolchain, "PR SHA: $((git rev-parse HEAD).Trim())") |
             Out-File -Encoding utf8 '.artifacts/stable-toolchain.txt'
       - name: Build with stable /std:c++23 (no preview mode)
         shell: pwsh
