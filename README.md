@@ -29,7 +29,9 @@ For a **provisional MSVC 14.51 development run only**, append `/p:UsePreviewCxx2
 
 ## Status
 
-**Source implementation / initial review, not yet a verified Release Candidate.** In the preparation environment, no Windows/MSVC build or clean Windows VMs are available. Windows runtime tests, exact EXE size and PE dependencies remain **NOT VERIFIED** until CI reports successful execution. A successful provisional 14.51 run would support development but would not replace a stable 14.52+ release build or clean-machine testing. Do not distribute as a verified 1.0 build yet.
+**Provisional development CI: PASS; not a release-qualified build.** On 11 November 2026, [Windows CI #12](https://github.com/StanleyLl0yd/LockPeek/actions/runs/42968161722) checked out exact PR head `a84bd67a`, built both x64 executables and passed all 35 native unit/integration checks on a Windows Server 2025 runner. MSVC 19.51.36260 used the explicitly provisional `/std:c++23preview` mode. The EXE is **229,376 bytes (224 KiB)**, imports only seven Windows system DLLs, and has static CRT, CFG, ASLR and DEP checks passing.
+
+**Outstanding release blockers:** a build with *confirmed stable* MSVC 14.52+ under `/std:c++23`, manual clean Windows 10 and Windows 11 x64 QA (especially GUI, UAC, waiting and paths), and idle RAM/CPU measurement. CI coverage does not prove clean-machine compatibility. Do not publish a GitHub Release without separate authorization.
 
 ## Source layout
 

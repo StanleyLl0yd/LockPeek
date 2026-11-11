@@ -1,6 +1,6 @@
 # Known limitations
 
-- Windows 10 and Windows 11 x64 are intended targets; no actual run or clean-VM verification has yet occurred.
+- Windows 10 and Windows 11 x64 are intended targets; 35/35 automated checks passed on a Windows Server 2025 GitHub Actions runner, but neither clean Windows 10 nor clean Windows 11 has yet been manually verified.
 - Administrator elevation may expand visibility, but protected processes remain intentionally inaccessible.
 - Windows `SystemExtendedHandleInformation` is not a documented ABI. Scans fail or are explicitly partial when it cannot be used safely. No Restart Manager fallback is provided.
 - The tool shows open matching file handles, **not** which sharing flags deny deletion. A found process need not be a blocker, and an empty list is not proof of freedom.
