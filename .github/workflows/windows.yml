@@ -16,6 +16,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Identify stable compiler and build Release x64
+        id: build
         shell: pwsh
         run: |
           $ErrorActionPreference='Stop'
@@ -42,17 +43,18 @@ jobs:
           if (!(Test-Path $MSBuild)) { throw 'MSBuild.exe not found' }
           cmd /d /s /c "call `"$VcVars`" >nul && `"$MSBuild`" LockPeek.sln /m /t:Build /p:Configuration=Release /p:Platform=x64 /p:UsePreviewCxx23=$Preview /v:minimal"
           if ($LASTEXITCODE -ne 0) { throw 'MSBuild failed' }
+      - name: Inspect PE, CRT imports, hardening and size
+        shell: pwsh
+        run: |
+          ./scripts/verify-release.ps1 -Exe (Resolve-Path './x64/Release/LockPeek.exe').Path -ReportDirectory '.artifacts' -AllowProvisionalToolchain:($env:LOCKPEEK_PREVIEW -eq 'true')
       - name: Unit and integration tests (native handle enumeration)
         shell: pwsh
         run: |
           New-Item -Force -ItemType Directory '.artifacts' | Out-Null
           & .\x64\Release\LockPeekTests.exe 2>&1 | Tee-Object -FilePath '.artifacts/tests.txt'
           if ($LASTEXITCODE -ne 0) { throw "LockPeekTests failed: $LASTEXITCODE" }
-      - name: Inspect PE, CRT imports, hardening and size
-        shell: pwsh
-        run: |
-          ./scripts/verify-release.ps1 -Exe (Resolve-Path './x64/Release/LockPeek.exe').Path -ReportDirectory '.artifacts' -AllowProvisionalToolchain:($env:LOCKPEEK_PREVIEW -eq 'true')
       - name: Publish unsigned build and diagnostics (not a GitHub Release)
+        if: ${{ always() && steps.build.outcome == 'success' }}
         uses: actions/upload-artifact@v4
         with:
           name: LockPeek-Windows-x64-unsigned
