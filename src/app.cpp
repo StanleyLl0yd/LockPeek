@@ -271,8 +271,9 @@ class App {
             (waitVolume_ != result_.targetVolume || waitFileId_ != result_.targetFileId)) {
             waiting_ = false;
             KillTimer(window_, kWaitTimer);
-            ShowStatus(Text(L"The selected path now refers to a different file. Waiting stopped.",
-                            L"По выбранному пути теперь другой файл. Ожидание остановлено."));
+            ShowStatus(Text(L"Waiting stopped: file changed", L"Ожидание остановлено: файл заменён"),
+                       Text(L"The selected path now refers to a different file. No release is implied.",
+                            L"По выбранному пути находится другой файл. Освобождение исходного файла не подтверждено."));
             UpdateButtons();
             return;
         }
@@ -290,19 +291,23 @@ class App {
             waiting_ = false;
             KillTimer(window_, kWaitTimer);
             if (result_.partial || result_.inaccessible || result_.uninspectable) {
-                if (waitIdentityPinned_) {
-                    ShowStatus(Text(L"Previously seen matching handles are no longer visible, but the scan was incomplete. The file may still be held; deletion is not guaranteed.",
-                                    L"Ранее найденные дескрипторы больше не видны, но проверка неполная. Файл всё ещё может удерживаться; удаление не гарантировано."));
-                } else {
-                    ShowStatus(Text(L"No matching handles visible at this path; scan incomplete and original file identity unknown. It may have changed or still be held.",
-                                    L"По этому пути дескрипторы не видны; проверка неполная, исходный файл не опознан. Он мог измениться или всё ещё удерживаться."));
-                }
+                ShowStatus(Text(L"Previously found handles are no longer visible",
+                                L"Ранее найденные дескрипторы больше не видны"),
+                           waitIdentityPinned_ ?
+                           Text(L"Scan incomplete; the file may still be held. Deletion is not guaranteed.",
+                                L"Проверка неполная. Файл может всё ещё удерживаться. Удаление не гарантировано.") :
+                           Text(L"Scan incomplete and original file identity unknown. It may still be held or replaced.",
+                                L"Проверка неполная, исходный файл не опознан. Он мог измениться или всё ещё удерживаться."));
             } else if (waitIdentityPinned_) {
-                ShowStatus(Text(L"Previously detected processes no longer have matching handles. Deletion is not guaranteed.",
-                                L"Ранее найденные процессы больше не удерживают обнаруженные дескрипторы. Удаление не гарантировано."));
+                ShowStatus(Text(L"Previously found handles are no longer visible",
+                                L"Ранее найденные дескрипторы больше не видны"),
+                           Text(L"Release cannot be guaranteed; deletion may still be blocked.",
+                                L"Освобождение не гарантировано, удаление всё ещё может быть заблокировано."));
             } else {
-                ShowStatus(Text(L"No matching handles remain at this path. The original file identity was not verified; it may have changed. Deletion is not guaranteed.",
-                                L"По этому пути совпадающих дескрипторов больше нет. Исходная идентичность файла не подтверждена; он мог измениться. Удаление не гарантировано."));
+                ShowStatus(Text(L"No matching handles visible at this path",
+                                L"По этому пути совпадающих дескрипторов не видно"),
+                           Text(L"The original file identity could not be verified; it may have changed.",
+                                L"Исходная идентичность файла не подтверждена. Он мог измениться."));
             }
         }
         if (!result_.hits.empty()) hadMatches_ = true;
@@ -531,7 +536,7 @@ private:
             section_ = Make(L"STATIC", Text(L"DETECTED PROCESSES", L"ОБНАРУЖЕННЫЕ ПРОЦЕССЫ"), SS_LEFT);
             list_ = Make(WC_LISTVIEWW, L"", LVS_REPORT | LVS_SINGLESEL | LVS_SHOWSELALWAYS, 0, WS_EX_CLIENTEDGE);
             ListView_SetExtendedListViewStyle(list_, LVS_EX_FULLROWSELECT | LVS_EX_DOUBLEBUFFER |
-                                                      LVS_EX_LABELTIP | LVS_EX_INFOTIP);
+                                                      LVS_EX_LABELTIP);
             const wchar_t* headersEn[] = {L"Process", L"PID", L"Match", L"Executable path"};
             const wchar_t* headersRu[] = {L"Процесс", L"PID", L"Совпадение", L"Путь к программе"};
             for (int i = 0; i < 4; ++i) {
@@ -604,25 +609,6 @@ private:
             const bool muted = control == hint_ || control == fileLabel_;
             SetTextColor(dc, muted ? RGB(92, 102, 116) : RGB(31, 41, 55));
             return reinterpret_cast<LRESULT>(GetSysColorBrush(COLOR_BTNFACE));
-        }
-        case WM_NOTIFY: {
-            const auto* hdr = reinterpret_cast<const NMHDR*>(l);
-            if (hdr && hdr->hwndFrom == list_ && hdr->code == LVN_GETINFOTIPW) {
-                auto* tip = reinterpret_cast<NMLVGETINFOTIPW*>(l);
-                if (tip->pszText && tip->cchTextMax > 0 &&
-                    tip->iItem >= 0 && static_cast<size_t>(tip->iItem) < result_.hits.size()) {
-                    const auto& hit = result_.hits[static_cast<size_t>(tip->iItem)];
-                    const std::wstring full = hit.image.empty()
-                        ? Text(L"Executable path unavailable", L"Путь к программе недоступен")
-                        : hit.image;
-                    const auto maxLength = static_cast<size_t>(tip->cchTextMax) - 1;
-                    const auto length = std::min(maxLength, full.size());
-                    std::copy_n(full.data(), length, tip->pszText);
-                    tip->pszText[length] = L'\0';
-                }
-                return 0;
-            }
-            return DefWindowProcW(h, m, w, l);
         }
         case WM_COMMAND:
             switch (LOWORD(w)) {
