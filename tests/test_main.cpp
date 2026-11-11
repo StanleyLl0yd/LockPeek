@@ -16,6 +16,14 @@ void Check(bool ok, const char* what) {
     std::printf("%s: %s\n", ok ? "PASS" : "FAIL", what);
     if (!ok) ++failures;
 }
+void DescribeScan(const char* stage, const lockpeek::ScanResult& r) {
+    std::printf("SCAN DIAGNOSTIC %s: win32=%lu ntstatus=0x%08X timeout=%d canceled=%d partial=%d id=%d hits=%zu inaccessible=%u uninspectable=%u\\n",
+                stage, static_cast<unsigned long>(r.win32Error), r.ntstatus,
+                r.timeout ? 1 : 0, r.canceled ? 1 : 0, r.partial ? 1 : 0,
+                r.targetIdentityAvailable ? 1 : 0, r.hits.size(),
+                r.inaccessible, r.uninspectable);
+    std::fflush(stdout);
+}
 class Handle {
     HANDLE h_ = nullptr;
 public:
@@ -159,6 +167,7 @@ void IntegrationTests() {
         Check(first, "start one deterministic file holder");
         if (first) {
             const auto single = lockpeek::RunIsolatedScan(path, nullptr);
+            DescribeScan("single", single);
             bool found = false;
             for (const auto& hit : single.hits) if (hit.pid == a.pid) found = true;
             Check(!single.win32Error && !single.timeout && found, "detect one file holder");
@@ -170,6 +179,7 @@ void IntegrationTests() {
         Check(both, "start two deterministic file holders");
         if (both) {
             const auto result = lockpeek::RunIsolatedScan(path, nullptr);
+            DescribeScan("dual", result);
             Check(!result.win32Error && !result.timeout, "isolated native scan succeeded");
             bool foundA = false, foundB = false;
             for (const auto& hit : result.hits) {
@@ -180,6 +190,7 @@ void IntegrationTests() {
             Check(!result.hits.empty(), "return structured matching evidence");
             if (hasHardlink) {
                 const auto alternate = lockpeek::RunIsolatedScan(alias, nullptr);
+                DescribeScan("hardlink", alternate);
                 bool aliasA = false, aliasB = false;
                 for (const auto& hit : alternate.hits) {
                     if (hit.pid == a.pid && hit.match == lockpeek::Match::FileId) aliasA = true;
@@ -192,6 +203,7 @@ void IntegrationTests() {
         SetEvent(quit.get()); // Child destructors join and close process handles.
     }
     const auto cleared = lockpeek::RunIsolatedScan(path, nullptr);
+    DescribeScan("cleared", cleared);
     Check(!cleared.win32Error && !cleared.timeout, "recheck after holders exit");
     Check(cleared.hits.empty(), "no stale holders after processes exited");
     ResetEvent(quit.get());
@@ -202,6 +214,7 @@ void IntegrationTests() {
         Check(launched, "start holder that explicitly allows delete sharing");
         if (launched) {
             const auto scan = lockpeek::RunIsolatedScan(path, nullptr);
+            DescribeScan("sharing", scan);
             bool found = false;
             for (const auto& hit : scan.hits) if (hit.pid == permissive.pid) found = true;
             Check(!scan.win32Error && !scan.timeout && found,
