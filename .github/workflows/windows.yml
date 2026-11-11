@@ -14,7 +14,16 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 35
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Verify exact checkout SHA
+        shell: pwsh
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          $actual=(git rev-parse HEAD).Trim()
+          if ($actual -ne $env:EXPECTED_SHA) { throw "Checked out $actual instead of expected $env:EXPECTED_SHA" }
       - name: Identify stable compiler and build Release x64
         id: build
         shell: pwsh
@@ -55,7 +64,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "LockPeekTests failed: $LASTEXITCODE" }
       - name: Publish unsigned build and diagnostics (not a GitHub Release)
         if: ${{ always() && steps.build.outcome == 'success' }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: LockPeek-Windows-x64-unsigned
           path: |
@@ -63,3 +72,4 @@ jobs:
             .artifacts/**
           if-no-files-found: error
           retention-days: 14
+          include-hidden-files: true
