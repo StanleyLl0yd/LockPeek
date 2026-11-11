@@ -50,7 +50,7 @@ struct WireResult {
     uint32_t size = 0;
     uint32_t win32Error = ERROR_SUCCESS;
     uint32_t ntstatus = 0;
-    uint32_t flags = 0; // bit0=partial, bit1=truncated, bit2=target-ID
+    uint32_t flags = 0; // bit0=partial, bit1=truncated, bit2=target-ID, bit3=internal-timeout
     uint32_t inaccessible = 0;
     uint32_t uninspectable = 0;
     uint32_t count = 0;
@@ -64,6 +64,8 @@ static_assert(sizeof(WireResult) == 56 + 16 * kMaxHits);
 // A weak observation only: an incomplete scan cannot prove release.
 bool NoMatchingHandlesObserved(const ScanResult& result) noexcept;
 bool ValidWire(const WireResult& w) noexcept;
+// Fairly interleave handles by PID while retaining original order within each PID.
+std::vector<size_t> FairHandleOrder(const std::vector<uint32_t>& pids);
 bool ValidateExtendedHandleBuffer(const void* data, size_t bytes, size_t& count) noexcept;
 std::wstring NormalizePath(const std::wstring& path);
 std::wstring QuoteArgument(const std::wstring& s);
