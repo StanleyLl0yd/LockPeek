@@ -6,6 +6,7 @@
 #include <cstddef>
 #include <winsvc.h>
 #include <cstring>
+#include <deque>
 #include <cwchar>
 #include <cwctype>
 #include <limits>
@@ -224,11 +225,41 @@ bool NoMatchingHandlesObserved(const ScanResult& result) noexcept {
 
 bool ValidWire(const WireResult& w) noexcept {
     if (w.magic != kMagic || w.size != sizeof(WireResult) || w.count > kMaxHits) return false;
-    if (w.flags & ~7u) return false;
+    if (w.flags & ~15u) return false;
     for (uint32_t i = 0; i < w.count; ++i) {
         if (!w.hits[i].pid || (w.hits[i].match != 1 && w.hits[i].match != 2)) return false;
     }
     return true;
+}
+
+// A process with many handles must not exhaust the bounded worker's time
+// before smaller processes have a chance to be inspected. Interleave the
+// first, second, third, ... eligible file handles of each PID. Use the
+// snapshot's first-appearance PID order without any privilege assumptions.
+std::vector<size_t> FairHandleOrder(const std::vector<uint32_t>& pids) {
+    struct Group {
+        std::vector<size_t> positions;
+        size_t next = 0;
+    };
+    std::unordered_map<uint32_t, size_t> groupByPid;
+    std::vector<Group> groups;
+    for (size_t i = 0; i < pids.size(); ++i) {
+        auto [it, added] = groupByPid.try_emplace(pids[i], groups.size());
+        if (added) groups.emplace_back();
+        groups[it->second].positions.push_back(i);
+    }
+    std::deque<size_t> pending;
+    for (size_t i = 0; i < groups.size(); ++i) pending.push_back(i);
+    std::vector<size_t> order;
+    order.reserve(pids.size());
+    while (!pending.empty()) {
+        const size_t index = pending.front();
+        pending.pop_front();
+        Group& group = groups[index];
+        order.push_back(group.positions[group.next++]);
+        if (group.next < group.positions.size()) pending.push_back(index);
+    }
+    return order;
 }
 
 std::wstring NormalizePath(const std::wstring& input) {
@@ -342,10 +373,25 @@ ScanResult ScanHandles(const std::wstring& file) {
     std::unordered_set<ULONG_PTR> inaccessiblePids;
     std::unordered_map<void*, Match> positiveObjectMatches;
     const ULONGLONG started = GetTickCount64();
+    std::vector<size_t> eligible;
+    std::vector<uint32_t> eligiblePids;
+    // Construct a bounded index over this single immutable native snapshot.
+    // Every candidate is still inspected under the same 14.5s deadline;
+    // only the scheduling order changes. No matches are invented or omitted.
     for (size_t i = 0; i < snapshot.count; ++i) {
-        if (GetTickCount64() - started >= kInternalDeadlineMs) { result.partial = true; result.timeout = true; break; }
         const auto& h = snapshot.handles[i];
         if (h.typeIndex != fileType || h.pid == pid || h.pid == 0 || h.pid > UINT32_MAX) continue;
+        eligible.push_back(i);
+        eligiblePids.push_back(static_cast<uint32_t>(h.pid));
+    }
+    const auto order = FairHandleOrder(eligiblePids);
+    for (size_t position : order) {
+        if (GetTickCount64() - started >= kInternalDeadlineMs) {
+            result.partial = true;
+            result.timeout = true;
+            break;
+        }
+        const auto& h = snapshot.handles[eligible[position]];
         auto [it, inserted] = processes.try_emplace(h.pid);
         if (inserted) {
             it->second.duplicator.reset(OpenProcess(PROCESS_DUP_HANDLE, FALSE, static_cast<DWORD>(h.pid)));
@@ -464,7 +510,7 @@ int RunScanWorker(const std::wstring& filename) {
     out.win32Error = result.win32Error;
     out.ntstatus = result.ntstatus;
     out.flags = (result.partial ? 1u : 0u) | (result.truncated ? 2u : 0u) |
-                (result.targetIdentityAvailable ? 4u : 0u);
+                (result.targetIdentityAvailable ? 4u : 0u) | (result.timeout ? 8u : 0u);
     out.inaccessible = result.inaccessible;
     out.uninspectable = result.uninspectable;
     out.count = static_cast<uint32_t>(std::min<size_t>(result.hits.size(), kMaxHits));
@@ -637,6 +683,7 @@ ScanResult RunIsolatedScan(const std::wstring& filename, const volatile LONG* ca
     result.partial = (wire.flags & 1) != 0;
     result.truncated = (wire.flags & 2) != 0;
     result.targetIdentityAvailable = (wire.flags & 4) != 0;
+    result.timeout = (wire.flags & 8) != 0;
     result.targetVolume = wire.targetVolume;
     result.targetFileId = wire.targetFileId;
     result.inaccessible = wire.inaccessible;
