@@ -225,7 +225,7 @@ bool NoMatchingHandlesObserved(const ScanResult& result) noexcept {
 
 bool ValidWire(const WireResult& w) noexcept {
     if (w.magic != kMagic || w.size != sizeof(WireResult) || w.count > kMaxHits) return false;
-    if (w.flags & ~15u) return false;
+    if ((w.flags & ~15u) || ((w.flags & 8u) && !(w.flags & 1u))) return false;
     for (uint32_t i = 0; i < w.count; ++i) {
         if (!w.hits[i].pid || (w.hits[i].match != 1 && w.hits[i].match != 2)) return false;
     }
@@ -376,8 +376,8 @@ ScanResult ScanHandles(const std::wstring& file) {
     std::vector<size_t> eligible;
     std::vector<uint32_t> eligiblePids;
     // Construct a bounded index over this single immutable native snapshot.
-    // Every candidate is still inspected under the same 14.5s deadline;
-    // only the scheduling order changes. No matches are invented or omitted.
+    // Every candidate remains in the queue, but the bounded deadline can
+    // still stop the scan early. That timeout is explicitly reported.
     for (size_t i = 0; i < snapshot.count; ++i) {
         const auto& h = snapshot.handles[i];
         if (h.typeIndex != fileType || h.pid == pid || h.pid == 0 || h.pid > UINT32_MAX) continue;
