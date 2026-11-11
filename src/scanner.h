@@ -64,6 +64,8 @@ static_assert(sizeof(WireResult) == 56 + 16 * kMaxHits);
 // A weak observation only: an incomplete scan cannot prove release.
 bool NoMatchingHandlesObserved(const ScanResult& result) noexcept;
 bool ValidWire(const WireResult& w) noexcept;
+uint32_t EncodeScanFlags(const ScanResult& result) noexcept;
+void DecodeScanFlags(ScanResult& result, uint32_t flags) noexcept;
 // Fairly interleave handles by PID while retaining original order within each PID.
 std::vector<size_t> FairHandleOrder(const std::vector<uint32_t>& pids);
 bool ValidateExtendedHandleBuffer(const void* data, size_t bytes, size_t& count) noexcept;
