@@ -104,6 +104,33 @@ void UnitTests() {
     Check(ValidWire(wire), "accept heuristic path evidence");
     wire.flags = 0x80000000;
     Check(!ValidWire(wire), "reject undocumented flags");
+    wire.flags = 8; // Timeout without partial is an invalid IPC claim.
+    Check(!ValidWire(wire), "reject timeout without incomplete scan flag");
+    wire.flags = 9;
+    Check(ValidWire(wire), "accept versioned internal worker timeout");
+    ScanResult timeoutOriginal{};
+    timeoutOriginal.partial = true;
+    timeoutOriginal.timeout = true;
+    timeoutOriginal.targetIdentityAvailable = true;
+    wire.flags = EncodeScanFlags(timeoutOriginal);
+    ScanResult timeoutRestored{};
+    DecodeScanFlags(timeoutRestored, wire.flags);
+    Check(ValidWire(wire) && timeoutRestored.timeout && timeoutRestored.partial &&
+          timeoutRestored.targetIdentityAvailable && !timeoutRestored.truncated,
+          "round-trip worker timeout through versioned IPC flags");
+    wire.flags = 0;
+    const std::vector<uint32_t> pids{11, 11, 11, 22, 22, 33};
+    const std::vector<size_t> expected{0, 3, 5, 1, 4, 2};
+    Check(FairHandleOrder(pids) == expected, "interleave handles fairly across processes");
+    Check(FairHandleOrder({}).empty(), "fair scheduling handles an empty snapshot");
+    Check(FairHandleOrder({77, 77, 77}) == std::vector<size_t>({0, 1, 2}),
+          "fair scheduling retains order within one process");
+    ScanResult timedOut{};
+    timedOut.partial = true;
+    timedOut.timeout = true;
+    timedOut.targetIdentityAvailable = true;
+    Check(!NoMatchingHandlesObserved(timedOut),
+          "internal scan timeout can never imply an open file was released");
     Check(sizeof(WireResult) == 56 + 16 * kMaxHits, "versioned IPC carries target file identity");
     std::array<std::byte, 56> snap{};
     size_t count = 7;
