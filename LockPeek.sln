@@ -1,0 +1,19 @@
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 18
+VisualStudioVersion = 18.0.0.0
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{BC8A1FFA-BEE3-4634-8014-F334798102B3}") = "LockPeek", "LockPeek.vcxproj", "{3C90977A-01F4-4DA8-9729-8896EAE6C66D}"
+EndProject
+Project("{BC8A1FFA-BEE3-4634-8014-F334798102B3}") = "LockPeekTests", "LockPeekTests.vcxproj", "{52F09E22-0ABA-487A-927F-69537D9E4ADF}"
+EndProject
+Global
+    GlobalSection(SolutionConfigurationPlatforms) = preSolution
+        Release|x64 = Release|x64
+    EndGlobalSection
+    GlobalSection(ProjectConfigurationPlatforms) = postSolution
+        {3C90977A-01F4-4DA8-9729-8896EAE6C66D}.Release|x64.ActiveCfg = Release|x64
+        {3C90977A-01F4-4DA8-9729-8896EAE6C66D}.Release|x64.Build.0 = Release|x64
+        {52F09E22-0ABA-487A-927F-69537D9E4ADF}.Release|x64.ActiveCfg = Release|x64
+        {52F09E22-0ABA-487A-927F-69537D9E4ADF}.Release|x64.Build.0 = Release|x64
+    EndGlobalSection
+EndGlobal

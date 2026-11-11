@@ -1,0 +1,114 @@
+name: Stable MSVC C++23 qualification
+on:
+  pull_request:
+permissions:
+  contents: read
+concurrency:
+  group: lockpeek-stable-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  stable-cxx23:
+    runs-on: windows-2025
+    timeout-minutes: 70
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ${{ github.event.pull_request.head.repo.full_name }}
+          ref: ${{ github.event.pull_request.head.sha }}
+      - name: Verify exact PR SHA
+        shell: pwsh
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          if ((git rev-parse HEAD).Trim() -ne $env:EXPECTED_SHA) {
+            throw "Checkout SHA differs from PR head $env:EXPECTED_SHA"
+          }
+      - name: Update hosted Visual Studio to current Stable channel
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $setup = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\setup.exe"
+          if (!(Test-Path -LiteralPath $vswhere) -or !(Test-Path -LiteralPath $setup)) {
+            throw 'Visual Studio Installer is unavailable'
+          }
+          $all = & $vswhere -all -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -format json | Out-String | ConvertFrom-Json
+          Write-Host "VS instances: $($all | Select-Object installationVersion, channelId, channelUri, isPrerelease | ConvertTo-Json -Depth 4 -Compress)"
+          $stable = @($all | Where-Object { ([version]$_.installationVersion).Major -eq 18 -and !$_.isPrerelease } | Sort-Object installationVersion -Descending)[0]
+          if (!$stable) { throw 'Visual Studio 2026 Stable C++ installation is unavailable' }
+          $root = $stable.installationPath
+          Write-Host "Current Stable VS: $($stable.installationVersion) at $root"
+          $args = @('update', '--installPath', "`"$root`"", '--quiet', '--norestart')
+          $process = Start-Process -FilePath $setup -ArgumentList $args -PassThru -Wait -NoNewWindow
+          if ($process.ExitCode -notin @(0, 3010)) {
+            throw "Stable VS update failed: exit code $($process.ExitCode)"
+          }
+          $after = & $vswhere -all -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -format json | Out-String | ConvertFrom-Json
+          $stable = @($after | Where-Object { ([version]$_.installationVersion).Major -eq 18 -and !$_.isPrerelease } | Sort-Object installationVersion -Descending)[0]
+          if (!$stable -or ([version]$stable.installationVersion -lt [version]'18.12')) {
+            throw 'Stable Visual Studio 2026 18.12+ not installed'
+          }
+          $root = $stable.installationPath
+          $vcvars = Join-Path $root 'VC\Auxiliary\Build\vcvars64.bat'
+          $toolchain = (cmd /d /s /c "call `"$vcvars`" >nul && cl 2>&1") -join "`n"
+          Write-Host $toolchain
+          if ($toolchain -notmatch 'Version 19\.(\d+)') { throw 'Cannot detect MSVC cl.exe' }
+          if ([int]$Matches[1] -lt 52) {
+            throw "Stable MSVC 19.52+ required; got 19.$($Matches[1])"
+          }
+          "LOCKPEEK_STABLE_VCVARS=$vcvars" >> $env:GITHUB_ENV
+          "LOCKPEEK_STABLE_MSBUILD=$(Join-Path $root 'MSBuild\Current\Bin\MSBuild.exe')" >> $env:GITHUB_ENV
+          New-Item -ItemType Directory -Force '.artifacts' | Out-Null
+          @("VS Stable: $($stable.installationVersion)", $toolchain, "PR SHA: $((git rev-parse HEAD).Trim())") |
+            Out-File -Encoding utf8 '.artifacts/stable-toolchain.txt'
+      - name: Build with stable /std:c++23 (no preview mode)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          if (!(Test-Path -LiteralPath $env:LOCKPEEK_STABLE_MSBUILD)) { throw 'MSBuild missing' }
+          cmd /d /s /c "call `"$env:LOCKPEEK_STABLE_VCVARS`" >nul && `"$env:LOCKPEEK_STABLE_MSBUILD`" LockPeek.sln /m /t:Build /p:Configuration=Release /p:Platform=x64 /p:UsePreviewCxx23=false /v:minimal"
+          if ($LASTEXITCODE -ne 0) { throw "Stable C++23 build failed: $LASTEXITCODE" }
+      - name: Verify stable EXE, CRT, PE hardening and imports
+        shell: pwsh
+        run: |
+          ./scripts/verify-release.ps1 -Exe (Resolve-Path './x64/Release/LockPeek.exe').Path -ReportDirectory '.artifacts'
+      - name: Run all native unit and integration tests
+        shell: pwsh
+        run: |
+          & .\x64\Release\LockPeekTests.exe 2>&1 | Tee-Object -FilePath '.artifacts/stable-tests.txt'
+          if ($LASTEXITCODE -ne 0) { throw "Native tests failed: $LASTEXITCODE" }
+      - name: Stable-built GUI startup and forged-message smoke
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $exe=(Resolve-Path './x64/Release/LockPeek.exe').Path
+          $proc=Start-Process -FilePath $exe -PassThru
+          try {
+            Start-Sleep -Milliseconds 1600
+            $proc.Refresh()
+            if ($proc.HasExited) { throw "Stable-built GUI exited on startup: $($proc.ExitCode)" }
+            $handle=$proc.MainWindowHandle
+            if (!$handle) { throw 'Stable-built GUI has no main window' }
+            & .\x64\Release\LockPeekTests.exe --gui-message-smoke "$handle"
+            if ($LASTEXITCODE -ne 0) { throw 'Forged window-message smoke failed' }
+            Start-Sleep -Milliseconds 400
+            $proc.Refresh()
+            if ($proc.HasExited) { throw "Stable-built GUI crashed: $($proc.ExitCode)" }
+          } finally {
+            $proc.Refresh()
+            if (!$proc.HasExited) {
+              if (!$proc.CloseMainWindow() -or !$proc.WaitForExit(5000)) {
+                Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+              }
+            }
+            $proc.Dispose()
+          }
+      - name: Upload stable-compiler unsigned artifact (not a release)
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: LockPeek-MSVC-stable-x64-unsigned
+          path: |
+            x64/Release/LockPeek.exe
+            .artifacts/**
+          if-no-files-found: error
+          retention-days: 14

@@ -1,0 +1,128 @@
+name: Windows native CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: lockpeek-ci-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  windows-x64:
+    runs-on: windows-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Verify exact checkout SHA
+        shell: pwsh
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          $actual=(git rev-parse HEAD).Trim()
+          if ($actual -ne $env:EXPECTED_SHA) { throw "Checked out $actual instead of expected $env:EXPECTED_SHA" }
+      - name: Parse client QA PowerShell script
+        shell: pwsh
+        run: |
+          $tokens=$null
+          $errors=$null
+          [System.Management.Automation.Language.Parser]::ParseFile(
+            (Resolve-Path 'scripts/qa-client.ps1').Path,
+            [ref]$tokens,
+            [ref]$errors
+          ) | Out-Null
+          if ($errors) { throw ($errors | Out-String) }
+      - name: Identify stable compiler and build Release x64
+        id: build
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $VsWhere="${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          if (!(Test-Path $VsWhere)) { throw 'VS Installer vswhere.exe not found' }
+          $Root=(& $VsWhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath | Select-Object -First 1)
+          if (!$Root) { throw 'C++ Build Tools not installed' }
+          $VcVars=Join-Path $Root 'VC\Auxiliary\Build\vcvars64.bat'
+          $Toolchain=(cmd /d /s /c "call `"$VcVars`" >nul && cl 2>&1") -join "`n"
+          Write-Host $Toolchain
+          if ($Toolchain -notmatch 'Version 19\.(\d+)') { throw 'Could not identify MSVC' }
+          $minor=[int]$Matches[1]
+          if ($minor -ge 52) {
+            $Preview='false'
+            Write-Host 'Stable C++23 target selected: /std:c++23'
+          } elseif ($minor -eq 51) {
+            $Preview='true'
+            Write-Warning 'Provisional testing on stable MSVC 14.51 with /std:c++23preview. Not an accepted C++23 release build.'
+          } else {
+            throw 'MSVC 14.51+ is required for provisional C++23 testing, 14.52+ for final release.'
+          }
+          "LOCKPEEK_PREVIEW=$Preview" >> $env:GITHUB_ENV
+          $MSBuild=Join-Path $Root 'MSBuild\Current\Bin\MSBuild.exe'
+          if (!(Test-Path $MSBuild)) { throw 'MSBuild.exe not found' }
+          cmd /d /s /c "call `"$VcVars`" >nul && `"$MSBuild`" LockPeek.sln /m /t:Build /p:Configuration=Release /p:Platform=x64 /p:UsePreviewCxx23=$Preview /v:minimal"
+          if ($LASTEXITCODE -ne 0) { throw 'MSBuild failed' }
+      - name: Inspect PE, CRT imports, hardening and size
+        shell: pwsh
+        run: |
+          ./scripts/verify-release.ps1 -Exe (Resolve-Path './x64/Release/LockPeek.exe').Path -ReportDirectory '.artifacts' -AllowProvisionalToolchain:($env:LOCKPEEK_PREVIEW -eq 'true')
+      - name: Unit and integration tests (native handle enumeration)
+        shell: pwsh
+        run: |
+          New-Item -Force -ItemType Directory '.artifacts' | Out-Null
+          & .\x64\Release\LockPeekTests.exe 2>&1 | Tee-Object -FilePath '.artifacts/tests.txt'
+          if ($LASTEXITCODE -ne 0) { throw "LockPeekTests failed: $LASTEXITCODE" }
+      - name: Hosted runner GUI startup and idle footprint (not clean Win10/11 QA)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $exe=(Resolve-Path './x64/Release/LockPeek.exe').Path
+          $proc=Start-Process -FilePath $exe -PassThru
+          try {
+            Start-Sleep -Milliseconds 1500
+            $proc.Refresh()
+            if ($proc.HasExited) { throw "GUI exited at startup: $($proc.ExitCode)" }
+            $initialCpu=$proc.TotalProcessorTime
+            Start-Sleep -Milliseconds 2000
+            $proc.Refresh()
+            if ($proc.HasExited) { throw "GUI exited during idle smoke: $($proc.ExitCode)" }
+            $idleCpuMs=($proc.TotalProcessorTime-$initialCpu).TotalMilliseconds
+            $workingSet=$proc.WorkingSet64
+            $privateBytes=$proc.PrivateMemorySize64
+            $windowHandle=$proc.MainWindowHandle
+            if (!$windowHandle) { throw 'GUI main window handle not found' }
+            & .\x64\Release\LockPeekTests.exe --gui-message-smoke "$windowHandle"
+            if ($LASTEXITCODE -ne 0) { throw "External window message smoke failed: $LASTEXITCODE" }
+            Start-Sleep -Milliseconds 400
+            $proc.Refresh()
+            if ($proc.HasExited) { throw "GUI crashed after untrusted window message: $($proc.ExitCode)" }
+            $report=@(
+              'Hosted Windows Server GUI smoke (not clean Win10/11 qualification)',
+              "Working set: $workingSet bytes",
+              "Private bytes: $privateBytes bytes",
+              "CPU time over 2000ms idle sample: $idleCpuMs ms",
+              "Main window handle: $windowHandle"
+            )
+            $report | Tee-Object -FilePath '.artifacts/gui-smoke.txt'
+          } finally {
+            $proc.Refresh()
+            if (!$proc.HasExited) {
+              $closed=$proc.CloseMainWindow()
+              if (!$closed -or !$proc.WaitForExit(5000)) {
+                Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+              }
+            }
+            $proc.Dispose()
+          }
+      - name: Publish unsigned build and diagnostics (not a GitHub Release)
+        if: ${{ always() && steps.build.outcome == 'success' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: LockPeek-Windows-x64-unsigned
+          path: |
+            x64/Release/LockPeek.exe
+            .artifacts/**
+          if-no-files-found: error
+          retention-days: 14
+          include-hidden-files: true
