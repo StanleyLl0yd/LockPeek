@@ -370,6 +370,17 @@ ScanResult ScanHandles(const std::wstring& file) {
             continue;
         }
         Handle duplicated(raw);
+        // The NT FILE object type also covers pipes and device handles.
+        // FileIdInfo is not valid for pipes; avoid issuing potentially
+        // blocking filesystem-name queries against those unrelated objects.
+        const DWORD kind = GetFileType(duplicated.get());
+        if (kind != FILE_TYPE_DISK) {
+            if (kind == FILE_TYPE_UNKNOWN) {
+                ++result.uninspectable;
+                result.partial = true;
+            }
+            continue;
+        }
         Match match = Match::Path;
         bool matched = false;
         FILE_ID_INFO candidate{};
