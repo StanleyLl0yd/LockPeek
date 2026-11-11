@@ -108,6 +108,16 @@ void UnitTests() {
     Check(!ValidWire(wire), "reject timeout without incomplete scan flag");
     wire.flags = 9;
     Check(ValidWire(wire), "accept versioned internal worker timeout");
+    ScanResult timeoutOriginal{};
+    timeoutOriginal.partial = true;
+    timeoutOriginal.timeout = true;
+    timeoutOriginal.targetIdentityAvailable = true;
+    wire.flags = EncodeScanFlags(timeoutOriginal);
+    ScanResult timeoutRestored{};
+    DecodeScanFlags(timeoutRestored, wire.flags);
+    Check(ValidWire(wire) && timeoutRestored.timeout && timeoutRestored.partial &&
+          timeoutRestored.targetIdentityAvailable && !timeoutRestored.truncated,
+          "round-trip worker timeout through versioned IPC flags");
     wire.flags = 0;
     const std::vector<uint32_t> pids{11, 11, 11, 22, 22, 33};
     const std::vector<size_t> expected{0, 3, 5, 1, 4, 2};
