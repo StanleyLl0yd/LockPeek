@@ -37,8 +37,11 @@ class App {
     HINSTANCE instance_;
     HWND window_ = nullptr;
     HWND file_ = nullptr, list_ = nullptr, status_ = nullptr, hint_ = nullptr;
+    HWND title_ = nullptr, fileLabel_ = nullptr, section_ = nullptr;
+    HWND statusPanel_ = nullptr, statusDetails_ = nullptr;
     HWND choose_ = nullptr, retry_ = nullptr, wait_ = nullptr, copy_ = nullptr, elevate_ = nullptr;
-    HFONT font_ = nullptr;
+    HFONT font_ = nullptr, headingFont_ = nullptr, emphasisFont_ = nullptr;
+    HBRUSH whiteBrush_ = nullptr;
     std::wstring selected_;
     ScanResult result_{};
     std::thread thread_;
@@ -59,8 +62,10 @@ class App {
     uint64_t generation_ = 0;
 
     const wchar_t* Text(const wchar_t* en, const wchar_t* ru) const { return english_ ? en : ru; }
-    void SetFont(HWND control) {
-        if (control && font_) SendMessageW(control, WM_SETFONT, reinterpret_cast<WPARAM>(font_), TRUE);
+    void SetFont(HWND control, HFONT font = nullptr) {
+        HFONT chosen = font ? font : font_;
+        if (control && chosen)
+            SendMessageW(control, WM_SETFONT, reinterpret_cast<WPARAM>(chosen), TRUE);
     }
     HWND Make(const wchar_t* type, const wchar_t* label, DWORD style, int id = 0, DWORD ex = 0) {
         auto h = CreateWindowExW(ex, type, label, style | WS_CHILD | WS_VISIBLE,
@@ -78,14 +83,40 @@ class App {
         NONCLIENTMETRICSW metrics{};
         metrics.cbSize = sizeof(metrics);
         if (!SystemParametersInfoW(SPI_GETNONCLIENTMETRICS, sizeof(metrics), &metrics, 0)) return;
-        metrics.lfMessageFont.lfHeight = -MulDiv(14, static_cast<int>(WindowDpi(window_)), 72);
-        HFONT next = CreateFontIndirectW(&metrics.lfMessageFont);
-        if (!next) return;
-        const auto previous = font_;
+        const int dpi = static_cast<int>(WindowDpi(window_));
+        LOGFONTW base = metrics.lfMessageFont;
+        base.lfHeight = -MulDiv(10, dpi, 72);
+        base.lfWeight = FW_NORMAL;
+        wcscpy_s(base.lfFaceName, L"Segoe UI");
+        HFONT next = CreateFontIndirectW(&base);
+        LOGFONTW large = base;
+        large.lfHeight = -MulDiv(17, dpi, 72);
+        large.lfWeight = FW_SEMIBOLD;
+        HFONT nextHeading = CreateFontIndirectW(&large);
+        LOGFONTW emphasis = base;
+        emphasis.lfWeight = FW_SEMIBOLD;
+        HFONT nextEmphasis = CreateFontIndirectW(&emphasis);
+        if (!next || !nextHeading || !nextEmphasis) {
+            if (next) DeleteObject(next);
+            if (nextHeading) DeleteObject(nextHeading);
+            if (nextEmphasis) DeleteObject(nextEmphasis);
+            return;
+        }
+        const HFONT previous = font_;
+        const HFONT previousHeading = headingFont_;
+        const HFONT previousEmphasis = emphasisFont_;
         font_ = next;
-        for (HWND c : {file_, list_, status_, hint_, choose_, retry_, wait_, copy_, elevate_})
+        headingFont_ = nextHeading;
+        emphasisFont_ = nextEmphasis;
+        for (HWND c : {file_, list_, hint_, fileLabel_, statusDetails_, choose_,
+                       retry_, wait_, copy_, elevate_})
             SetFont(c);
+        SetFont(title_, headingFont_);
+        SetFont(section_, emphasisFont_);
+        SetFont(status_, emphasisFont_);
         if (previous) DeleteObject(previous);
+        if (previousHeading) DeleteObject(previousHeading);
+        if (previousEmphasis) DeleteObject(previousEmphasis);
     }
     void Resize() {
         if (!window_) return;
@@ -93,29 +124,48 @@ class App {
         GetClientRect(window_, &rc);
         const int scale = static_cast<int>(WindowDpi(window_));
         auto u = [scale](int v) { return MulDiv(v, scale, 96); };
-        const int gap = u(14), row = u(30), button = u(142);
         const int width = rc.right - rc.left;
-        const int inner = std::max(u(200), width - gap * 2);
-        const int y = gap;
-        MoveWindow(file_, gap, y, std::max(u(100), inner - button - u(10)), row, TRUE);
-        MoveWindow(choose_, width - gap - button, y, button, row, TRUE);
-        MoveWindow(hint_, gap, y + row + u(8), inner, u(24), TRUE);
-        const int listTop = y + row + u(40);
-        const int controlsTop = std::max(listTop + u(90), static_cast<int>(rc.bottom) - u(116));
-        MoveWindow(list_, gap, listTop, inner, std::max(u(60), controlsTop - listTop - u(10)), TRUE);
-        MoveWindow(status_, gap, controlsTop, inner, u(39), TRUE);
-        const int buttonsY = controlsTop + u(43);
-        const int smallGap = u(7);
-        const int w = std::max(u(90), (inner - smallGap * 3) / 4);
-        MoveWindow(retry_, gap, buttonsY, w, row, TRUE);
-        MoveWindow(wait_, gap + w + smallGap, buttonsY, w, row, TRUE);
-        MoveWindow(copy_, gap + (w + smallGap) * 2, buttonsY, w, row, TRUE);
-        MoveWindow(elevate_, gap + (w + smallGap) * 3, buttonsY, w, row, TRUE);
-        const int firstCol = std::max(u(145), inner / 4);
+        const int height = rc.bottom - rc.top;
+        const int gap = u(20);
+        const int inner = std::max(u(300), width - gap * 2);
+
+        // The visual hierarchy stays stable across window sizes and DPI.
+        MoveWindow(title_, gap, u(13), inner, u(34), TRUE);
+        MoveWindow(hint_, gap, u(49), inner, u(23), TRUE);
+        MoveWindow(fileLabel_, gap, u(86), inner, u(22), TRUE);
+        const int buttonChoose = u(148);
+        MoveWindow(file_, gap, u(113), inner - buttonChoose - u(10), u(36), TRUE);
+        MoveWindow(choose_, width - gap - buttonChoose, u(113), buttonChoose, u(36), TRUE);
+        MoveWindow(section_, gap, u(166), inner, u(25), TRUE);
+
+        const int actionsY = height - gap - u(36);
+        const int statusHeight = u(89);
+        const int statusTop = actionsY - u(13) - statusHeight;
+        const int listTop = u(197);
+        const int listHeight = std::max(u(90), statusTop - listTop - u(12));
+        MoveWindow(list_, gap, listTop, inner, listHeight, TRUE);
+        MoveWindow(statusPanel_, gap, statusTop, inner, statusHeight, TRUE);
+        MoveWindow(status_, gap + u(14), statusTop + u(8), inner - u(28), u(26), TRUE);
+        MoveWindow(statusDetails_, gap + u(14), statusTop + u(35),
+                   inner - u(28), statusHeight - u(41), TRUE);
+
+        const int step = u(10);
+        const int first = u(158);
+        const int second = u(174);
+        const int third = u(169);
+        const int admin = u(172);
+        MoveWindow(retry_, gap, actionsY, first, u(36), TRUE);
+        MoveWindow(wait_, gap + first + step, actionsY, second, u(36), TRUE);
+        MoveWindow(copy_, gap + first + second + step * 2, actionsY, third, u(36), TRUE);
+        MoveWindow(elevate_, width - gap - admin, actionsY, admin, u(36), TRUE);
+
+        const int firstCol = std::max(u(150), inner / 4);
+        const int pidCol = u(77);
+        const int matchCol = u(140);
         ListView_SetColumnWidth(list_, 0, firstCol);
-        ListView_SetColumnWidth(list_, 1, u(86));
-        ListView_SetColumnWidth(list_, 2, u(110));
-        ListView_SetColumnWidth(list_, 3, std::max(u(120), inner - firstCol - u(200)));
+        ListView_SetColumnWidth(list_, 1, pidCol);
+        ListView_SetColumnWidth(list_, 2, matchCol);
+        ListView_SetColumnWidth(list_, 3, std::max(u(130), inner - firstCol - pidCol - matchCol - u(5)));
     }
     void UpdateButtons() {
         EnableWindow(retry_, !selected_.empty() && !busy_);
@@ -136,8 +186,14 @@ class App {
         CloseHandle(token);
         return elevated;
     }
-    void ShowStatus(std::wstring text) {
-        SetWindowTextW(status_, text.c_str());
+    void ShowStatus(const std::wstring& title, const std::wstring& detail = {}) {
+        if (status_) SetWindowTextW(status_, title.c_str());
+        if (statusDetails_) {
+            const std::wstring fallback = Text(
+                L"Open handles do not prove a deletion lock. Results may be incomplete.",
+                L"Открытый дескриптор не доказывает блокировку удаления. Проверка может быть неполной.");
+            SetWindowTextW(statusDetails_, (detail.empty() ? fallback : detail).c_str());
+        }
     }
     static std::wstring WindowsMessage(DWORD code) {
         wchar_t buffer[512]{};
@@ -172,32 +228,35 @@ class App {
             const std::wstring extra = hit.image.empty() ? L"" : hit.image;
             ListView_SetItemText(list_, index, 3, const_cast<wchar_t*>(extra.c_str()));
         }
-        std::wstring message;
-        if (result_.canceled) message = Text(L"Scan canceled.", L"Проверка отменена.");
-        else if (result_.timeout) message = Text(L"Scan timed out; results unknown.", L"Время проверки истекло; результат неизвестен.");
+        std::wstring summary;
+        std::wstring details = Text(
+            L"An open handle is not proof that deletion is blocked. An empty result is not proof the file is free.",
+            L"Открытый дескриптор не доказывает блокировку удаления. Пустой результат не гарантирует, что файл свободен.");
+        if (result_.canceled) summary = Text(L"Scan canceled", L"Проверка отменена");
+        else if (result_.timeout) summary = Text(L"Scan timed out", L"Время проверки истекло");
         else if (result_.win32Error) {
-            message = Text(L"Windows error: ", L"Ошибка Windows: ") + std::to_wstring(result_.win32Error);
+            summary = Text(L"Windows error: ", L"Ошибка Windows: ") + std::to_wstring(result_.win32Error);
             const auto detail = WindowsMessage(result_.win32Error);
-            if (!detail.empty()) message += L": " + detail;
+            if (!detail.empty()) details = detail + L". " + details;
             if (result_.ntstatus) {
                 wchar_t number[24]{};
                 swprintf_s(number, L" (NTSTATUS 0x%08X)", result_.ntstatus);
-                message += number;
+                summary += number;
             }
         } else if (result_.hits.empty()) {
-            message = Text(L"No matching open file handles found. Deletion is not guaranteed.",
-                           L"Совпадающие дескрипторы не найдены. Удаление файла не гарантировано.");
+            summary = Text(L"No matching file handles found", L"Совпадающие дескрипторы не найдены");
         } else {
-            message = std::to_wstring(result_.hits.size()) +
-                      Text(L" process(es) with matching open handles. This does NOT prove a delete lock.",
-                           L" процесс(ов) с открытыми дескрипторами. Это НЕ доказывает блокировку удаления.");
+            summary = Text(L"Processes with open handles: ", L"Процессов с открытыми дескрипторами: ") +
+                      std::to_wstring(result_.hits.size());
         }
         if (result_.partial || result_.truncated || result_.inaccessible || result_.uninspectable) {
-            message += Text(L" Scan incomplete/limited.", L" Проверка неполная/ограниченная.");
+            details += Text(L" Scan incomplete.", L" Проверка неполная.");
         }
-        if (result_.inaccessible) message += Text(L" Access denied for ", L" Нет доступа к процессам: ") +
-                                                 std::to_wstring(result_.inaccessible) + L".";
-        ShowStatus(std::move(message));
+        if (result_.inaccessible) {
+            details += Text(L" Inaccessible processes: ", L" Нет доступа к процессам: ") +
+                       std::to_wstring(result_.inaccessible) + L".";
+        }
+        ShowStatus(summary, details);
     }
     void Finish() {
         if (thread_.joinable()) thread_.join();
@@ -417,6 +476,9 @@ public:
         InterlockedExchange(&stop_, 1);
         if (thread_.joinable()) thread_.join();
         if (font_) DeleteObject(font_);
+        if (headingFont_) DeleteObject(headingFont_);
+        if (emphasisFont_) DeleteObject(emphasisFont_);
+        if (whiteBrush_) DeleteObject(whiteBrush_);
     }
     int Run(const std::wstring& initialFile, int show) {
         INITCOMMONCONTROLSEX cc{sizeof(cc), ICC_LISTVIEW_CLASSES};
@@ -428,11 +490,11 @@ public:
         wc.lpfnWndProc = WindowProc;
         wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
         wc.hIcon = LoadIconW(nullptr, IDI_APPLICATION);
-        wc.hbrBackground = reinterpret_cast<HBRUSH>(COLOR_WINDOW + 1);
+        wc.hbrBackground = GetSysColorBrush(COLOR_BTNFACE);
         if (!RegisterClassExW(&wc)) return 1;
         window_ = CreateWindowExW(0, wc.lpszClassName, L"LockPeek",
                                  WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN, CW_USEDEFAULT,
-                                 CW_USEDEFAULT, 1000, 550, nullptr, nullptr, instance_, this);
+                                 CW_USEDEFAULT, 980, 620, nullptr, nullptr, instance_, this);
         if (!window_) return 2;
         ShowWindow(window_, show);
         UpdateWindow(window_);
@@ -459,12 +521,17 @@ private:
     LRESULT Dispatch(HWND h, UINT m, WPARAM w, LPARAM l) {
         switch (m) {
         case WM_CREATE: {
-            RebuildFont();
-            file_ = Make(L"EDIT", L"", WS_BORDER | ES_AUTOHSCROLL | ES_READONLY, 0, WS_EX_CLIENTEDGE);
+            whiteBrush_ = CreateSolidBrush(RGB(255, 255, 255));
+            title_ = Make(L"STATIC", L"LockPeek", SS_LEFT);
+            hint_ = Make(L"STATIC", Text(L"Find processes that have a file open",
+                                          L"Найдите процессы, открывшие выбранный файл"), SS_LEFT);
+            fileLabel_ = Make(L"STATIC", Text(L"FILE", L"ФАЙЛ"), SS_LEFT);
+            file_ = Make(L"EDIT", L"", ES_AUTOHSCROLL | ES_READONLY, 0, WS_EX_CLIENTEDGE);
             choose_ = Make(L"BUTTON", Text(L"Choose file", L"Выбрать файл"), WS_TABSTOP | BS_PUSHBUTTON, kChoose);
-            hint_ = Make(L"STATIC", Text(L"Drop a file here or choose one to inspect", L"Перетащите файл сюда или выберите его"), SS_LEFT);
+            section_ = Make(L"STATIC", Text(L"DETECTED PROCESSES", L"ОБНАРУЖЕННЫЕ ПРОЦЕССЫ"), SS_LEFT);
             list_ = Make(WC_LISTVIEWW, L"", LVS_REPORT | LVS_SINGLESEL | LVS_SHOWSELALWAYS, 0, WS_EX_CLIENTEDGE);
-            ListView_SetExtendedListViewStyle(list_, LVS_EX_FULLROWSELECT | LVS_EX_DOUBLEBUFFER);
+            ListView_SetExtendedListViewStyle(list_, LVS_EX_FULLROWSELECT | LVS_EX_DOUBLEBUFFER |
+                                                      LVS_EX_LABELTIP | LVS_EX_INFOTIP);
             const wchar_t* headersEn[] = {L"Process", L"PID", L"Match", L"Executable path"};
             const wchar_t* headersRu[] = {L"Процесс", L"PID", L"Совпадение", L"Путь к программе"};
             for (int i = 0; i < 4; ++i) {
@@ -475,11 +542,16 @@ private:
                 col.pszText = const_cast<wchar_t*>(english_ ? headersEn[i] : headersRu[i]);
                 ListView_InsertColumn(list_, i, &col);
             }
-            status_ = Make(L"STATIC", Text(L"No file selected.", L"Файл не выбран."), SS_LEFT);
+            statusPanel_ = Make(L"STATIC", L"", SS_WHITERECT);
+            status_ = Make(L"STATIC", Text(L"No file selected", L"Файл не выбран"), SS_LEFT);
+            statusDetails_ = Make(L"STATIC",
+                Text(L"Choose a file above or drop it onto the window.",
+                     L"Выберите файл выше или перетащите его в окно."), SS_LEFT);
             retry_ = Make(L"BUTTON", Text(L"Scan again", L"Проверить снова"), WS_TABSTOP | BS_PUSHBUTTON, kRetry);
             wait_ = Make(L"BUTTON", Text(L"Wait for release", L"Ждать освобождения"), WS_TABSTOP | BS_PUSHBUTTON, kWait);
-            copy_ = Make(L"BUTTON", Text(L"Copy result", L"Копировать результат"), WS_TABSTOP | BS_PUSHBUTTON, kCopy);
+            copy_ = Make(L"BUTTON", Text(L"Copy report", L"Копировать отчёт"), WS_TABSTOP | BS_PUSHBUTTON, kCopy);
             elevate_ = Make(L"BUTTON", Text(L"Run as admin", L"От администратора"), WS_TABSTOP | BS_PUSHBUTTON, kElevate);
+            RebuildFont();
             DragAcceptFiles(h, TRUE);
             Resize();
             UpdateButtons();
@@ -497,8 +569,8 @@ private:
         case WM_GETMINMAXINFO: {
             auto* info = reinterpret_cast<MINMAXINFO*>(l);
             const int scale = static_cast<int>(WindowDpi(h));
-            info->ptMinTrackSize.x = MulDiv(650, scale, 96);
-            info->ptMinTrackSize.y = MulDiv(390, scale, 96);
+            info->ptMinTrackSize.x = MulDiv(760, scale, 96);
+            info->ptMinTrackSize.y = MulDiv(510, scale, 96);
             return 0;
         }
         case WM_DROPFILES: {
@@ -515,6 +587,42 @@ private:
             }
             DragFinish(drop);
             return 0;
+        }
+        case WM_CTLCOLORSTATIC: {
+            const auto dc = reinterpret_cast<HDC>(w);
+            const auto control = reinterpret_cast<HWND>(l);
+            SetBkMode(dc, TRANSPARENT);
+            if (control == file_) {
+                SetTextColor(dc, RGB(31, 41, 55));
+                SetBkColor(dc, RGB(255, 255, 255));
+                return reinterpret_cast<LRESULT>(whiteBrush_ ? whiteBrush_ : GetSysColorBrush(COLOR_WINDOW));
+            }
+            if (control == status_ || control == statusDetails_ || control == statusPanel_) {
+                SetTextColor(dc, control == status_ ? RGB(31, 41, 55) : RGB(82, 94, 110));
+                return reinterpret_cast<LRESULT>(whiteBrush_ ? whiteBrush_ : GetSysColorBrush(COLOR_WINDOW));
+            }
+            const bool muted = control == hint_ || control == fileLabel_;
+            SetTextColor(dc, muted ? RGB(92, 102, 116) : RGB(31, 41, 55));
+            return reinterpret_cast<LRESULT>(GetSysColorBrush(COLOR_BTNFACE));
+        }
+        case WM_NOTIFY: {
+            const auto* hdr = reinterpret_cast<const NMHDR*>(l);
+            if (hdr && hdr->hwndFrom == list_ && hdr->code == LVN_GETINFOTIPW) {
+                auto* tip = reinterpret_cast<NMLVGETINFOTIPW*>(l);
+                if (tip->pszText && tip->cchTextMax > 0 &&
+                    tip->iItem >= 0 && static_cast<size_t>(tip->iItem) < result_.hits.size()) {
+                    const auto& hit = result_.hits[static_cast<size_t>(tip->iItem)];
+                    const std::wstring full = hit.image.empty()
+                        ? Text(L"Executable path unavailable", L"Путь к программе недоступен")
+                        : hit.image;
+                    const auto maxLength = static_cast<size_t>(tip->cchTextMax) - 1;
+                    const auto length = std::min(maxLength, full.size());
+                    std::copy_n(full.data(), length, tip->pszText);
+                    tip->pszText[length] = L'\0';
+                }
+                return 0;
+            }
+            return DefWindowProcW(h, m, w, l);
         }
         case WM_COMMAND:
             switch (LOWORD(w)) {
