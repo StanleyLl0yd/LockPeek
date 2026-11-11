@@ -39,7 +39,7 @@
       <EnableCOMDATFolding>true</EnableCOMDATFolding><OptimizeReferences>true</OptimizeReferences>
       <LinkTimeCodeGeneration>UseLinkTimeCodeGeneration</LinkTimeCodeGeneration>
       <GenerateManifest>false</GenerateManifest>
-      <AdditionalOptions>/INCREMENTAL:NO /DYNAMICBASE /NXCOMPAT /HIGHENTROPYVA /guard:cf %(AdditionalOptions)</AdditionalOptions>
+      <AdditionalOptions>/MANIFEST:NO /INCREMENTAL:NO /DYNAMICBASE /NXCOMPAT /HIGHENTROPYVA /guard:cf %(AdditionalOptions)</AdditionalOptions>
       <AdditionalDependencies>kernel32.lib;user32.lib;gdi32.lib;comctl32.lib;comdlg32.lib;shell32.lib;advapi32.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
@@ -51,7 +51,7 @@
       <AdditionalOptions>$(LockPeekCxxStandard) /GS /GR- /EHsc /utf-8 %(AdditionalOptions)</AdditionalOptions>
       <PreprocessorDefinitions>UNICODE;_UNICODE;_WIN32_WINNT=0x0A00;%(PreprocessorDefinitions)</PreprocessorDefinitions>
     </ClCompile>
-    <Link><SubSystem>Windows</SubSystem><GenerateManifest>false</GenerateManifest>
+    <Link><SubSystem>Windows</SubSystem><GenerateManifest>false</GenerateManifest><AdditionalOptions>/MANIFEST:NO %(AdditionalOptions)</AdditionalOptions>
       <AdditionalDependencies>kernel32.lib;user32.lib;gdi32.lib;comctl32.lib;comdlg32.lib;shell32.lib;advapi32.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
