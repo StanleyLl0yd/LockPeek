@@ -253,6 +253,65 @@ void IntegrationTests() {
     Check(canceled.canceled && canceled.partial && canceled.hits.empty(),
           "canceled scan does not start or publish stale results");
 }
+
+bool ClientRectOnScreen(HWND window, RECT& rect) {
+    if (!GetClientRect(window, &rect)) return false;
+    POINT points[2] = {{rect.left, rect.top}, {rect.right, rect.bottom}};
+    if (!MapWindowPoints(window, nullptr, points, 2)) {
+        // A zero return is also valid when no coordinate offset is needed.
+        // Validate the mapped rectangle instead of trusting that return code.
+    }
+    rect = {points[0].x, points[0].y, points[1].x, points[1].y};
+    return rect.right > rect.left && rect.bottom > rect.top;
+}
+bool ChildRect(HWND window, int id, RECT& rect) {
+    HWND child = GetDlgItem(window, id);
+    return child && IsWindowVisible(child) && GetWindowRect(child, &rect);
+}
+bool LayoutAtCurrentSize(HWND window, const char* label) {
+    RECT client{}, choose{}, scan{}, wait{}, copy{}, admin{}, list{}, summary{}, details{};
+    const bool found = ClientRectOnScreen(window, client) &&
+        ChildRect(window, 101, choose) && ChildRect(window, 102, scan) &&
+        ChildRect(window, 103, wait) && ChildRect(window, 104, copy) &&
+        ChildRect(window, 105, admin) && ChildRect(window, 106, summary) &&
+        ChildRect(window, 107, details) && ChildRect(window, 108, list);
+    Check(found, label);
+    if (!found) return false;
+    Check(choose.left >= client.left && choose.right <= client.right &&
+          choose.top >= client.top && choose.bottom <= client.bottom &&
+          admin.left >= client.left && admin.right <= client.right &&
+          admin.bottom <= client.bottom, "GUI controls remain within client bounds");
+    Check(scan.top == wait.top && wait.top == copy.top && copy.top == admin.top &&
+          scan.right < wait.left && wait.right < copy.left && copy.right < admin.left,
+          "GUI action buttons align and do not overlap");
+    Check(list.top >= client.top && list.bottom < summary.top &&
+          list.bottom - list.top >= 80 && list.right <= client.right,
+          "GUI process list remains readable above the status panel");
+    Check(summary.top >= list.bottom && summary.bottom <= details.top &&
+          details.bottom < scan.top && summary.right <= client.right,
+          "GUI summary and details do not overlap action buttons");
+    return true;
+}
+void GuiLayoutSmoke(HWND window) {
+    RECT original{};
+    if (!GetWindowRect(window, &original)) {
+        Check(false, "GUI window rectangle available");
+        return;
+    }
+    LayoutAtCurrentSize(window, "GUI layout controls visible at default size");
+    // Force the small-window layout and check the same geometry. The main
+    // process applies its own DPI-aware minimum bounds through WM_GETMINMAXINFO.
+    if (SetWindowPos(window, nullptr, 0, 0, 760, 510,
+                     SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE)) {
+        Sleep(250);
+        LayoutAtCurrentSize(window, "GUI controls visible after minimizing window dimensions");
+        SetWindowPos(window, nullptr, 0, 0,
+                     original.right - original.left, original.bottom - original.top,
+                     SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+    } else {
+        Check(false, "GUI minimum-size resize accepted");
+    }
+}
 } // namespace
 
 int wmain(int argc, wchar_t** argv) {
@@ -263,8 +322,11 @@ int wmain(int argc, wchar_t** argv) {
         HWND window = reinterpret_cast<HWND>(static_cast<uintptr_t>(raw));
         if (!IsWindow(window)) return 7;
         // Invalid pointer payloads must not be read, deleted, or trusted.
-        return PostMessageW(window, WM_APP + 7, 0, 1) &&
-               PostMessageW(window, WM_APP + 7, 42, 2) ? 0 : 8;
+        if (!PostMessageW(window, WM_APP + 7, 0, 1) ||
+            !PostMessageW(window, WM_APP + 7, 42, 2)) return 8;
+        GuiLayoutSmoke(window);
+        std::printf("GUI LAYOUT SMOKE FAILURES: %d\n", failures);
+        return failures ? 9 : 0;
     }
     if (argc == 3 && std::wstring(argv[1]) == L"--scan-worker")
         return lockpeek::RunScanWorker(argv[2]);
