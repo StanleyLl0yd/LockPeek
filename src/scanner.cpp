@@ -232,6 +232,18 @@ bool ValidWire(const WireResult& w) noexcept {
     return true;
 }
 
+uint32_t EncodeScanFlags(const ScanResult& result) noexcept {
+    return (result.partial ? 1u : 0u) | (result.truncated ? 2u : 0u) |
+           (result.targetIdentityAvailable ? 4u : 0u) | (result.timeout ? 8u : 0u);
+}
+
+void DecodeScanFlags(ScanResult& result, uint32_t flags) noexcept {
+    result.partial = (flags & 1u) != 0;
+    result.truncated = (flags & 2u) != 0;
+    result.targetIdentityAvailable = (flags & 4u) != 0;
+    result.timeout = (flags & 8u) != 0;
+}
+
 // A process with many handles must not exhaust the bounded worker's time
 // before smaller processes have a chance to be inspected. Interleave the
 // first, second, third, ... eligible file handles of each PID. Use the
@@ -509,8 +521,7 @@ int RunScanWorker(const std::wstring& filename) {
     out.size = sizeof(out);
     out.win32Error = result.win32Error;
     out.ntstatus = result.ntstatus;
-    out.flags = (result.partial ? 1u : 0u) | (result.truncated ? 2u : 0u) |
-                (result.targetIdentityAvailable ? 4u : 0u) | (result.timeout ? 8u : 0u);
+    out.flags = EncodeScanFlags(result);
     out.inaccessible = result.inaccessible;
     out.uninspectable = result.uninspectable;
     out.count = static_cast<uint32_t>(std::min<size_t>(result.hits.size(), kMaxHits));
@@ -680,10 +691,7 @@ ScanResult RunIsolatedScan(const std::wstring& filename, const volatile LONG* ca
     }
     result.win32Error = wire.win32Error;
     result.ntstatus = wire.ntstatus;
-    result.partial = (wire.flags & 1) != 0;
-    result.truncated = (wire.flags & 2) != 0;
-    result.targetIdentityAvailable = (wire.flags & 4) != 0;
-    result.timeout = (wire.flags & 8) != 0;
+    DecodeScanFlags(result, wire.flags);
     result.targetVolume = wire.targetVolume;
     result.targetFileId = wire.targetFileId;
     result.inaccessible = wire.inaccessible;
