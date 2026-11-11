@@ -95,7 +95,7 @@ class App {
         MoveWindow(choose_, width - gap - button, y, button, row, TRUE);
         MoveWindow(hint_, gap, y + row + u(8), inner, u(24), TRUE);
         const int listTop = y + row + u(40);
-        const int controlsTop = std::max(listTop + u(90), rc.bottom - u(116));
+        const int controlsTop = std::max(listTop + u(90), static_cast<int>(rc.bottom) - u(116));
         MoveWindow(list_, gap, listTop, inner, std::max(u(60), controlsTop - listTop - u(10)), TRUE);
         MoveWindow(status_, gap, controlsTop, inner, u(39), TRUE);
         const int buttonsY = controlsTop + u(43);
