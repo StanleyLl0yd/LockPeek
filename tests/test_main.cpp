@@ -17,7 +17,7 @@ void Check(bool ok, const char* what) {
     if (!ok) ++failures;
 }
 void DescribeScan(const char* stage, const lockpeek::ScanResult& r) {
-    std::printf("SCAN DIAGNOSTIC %s: win32=%lu ntstatus=0x%08X timeout=%d canceled=%d partial=%d id=%d hits=%zu inaccessible=%u uninspectable=%u\\n",
+    std::printf("SCAN DIAGNOSTIC %s: win32=%lu ntstatus=0x%08X timeout=%d canceled=%d partial=%d id=%d hits=%zu inaccessible=%u uninspectable=%u\n",
                 stage, static_cast<unsigned long>(r.win32Error), r.ntstatus,
                 r.timeout ? 1 : 0, r.canceled ? 1 : 0, r.partial ? 1 : 0,
                 r.targetIdentityAvailable ? 1 : 0, r.hits.size(),

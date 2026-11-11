@@ -62,6 +62,42 @@ jobs:
           New-Item -Force -ItemType Directory '.artifacts' | Out-Null
           & .\x64\Release\LockPeekTests.exe 2>&1 | Tee-Object -FilePath '.artifacts/tests.txt'
           if ($LASTEXITCODE -ne 0) { throw "LockPeekTests failed: $LASTEXITCODE" }
+      - name: Hosted runner GUI startup and idle footprint (not clean Win10/11 QA)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $exe=(Resolve-Path './x64/Release/LockPeek.exe').Path
+          $proc=Start-Process -FilePath $exe -PassThru
+          try {
+            Start-Sleep -Milliseconds 1500
+            $proc.Refresh()
+            if ($proc.HasExited) { throw "GUI exited at startup: $($proc.ExitCode)" }
+            $initialCpu=$proc.TotalProcessorTime
+            Start-Sleep -Milliseconds 2000
+            $proc.Refresh()
+            if ($proc.HasExited) { throw "GUI exited during idle smoke: $($proc.ExitCode)" }
+            $idleCpuMs=($proc.TotalProcessorTime-$initialCpu).TotalMilliseconds
+            $workingSet=$proc.WorkingSet64
+            $privateBytes=$proc.PrivateMemorySize64
+            $windowHandle=$proc.MainWindowHandle
+            $report=@(
+              'Hosted Windows Server GUI smoke (not clean Win10/11 qualification)',
+              "Working set: $workingSet bytes",
+              "Private bytes: $privateBytes bytes",
+              "CPU time over 2000ms idle sample: $idleCpuMs ms",
+              "Main window handle: $windowHandle"
+            )
+            $report | Tee-Object -FilePath '.artifacts/gui-smoke.txt'
+          } finally {
+            $proc.Refresh()
+            if (!$proc.HasExited) {
+              $closed=$proc.CloseMainWindow()
+              if (!$closed -or !$proc.WaitForExit(5000)) {
+                Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+              }
+            }
+            $proc.Dispose()
+          }
       - name: Publish unsigned build and diagnostics (not a GitHub Release)
         if: ${{ always() && steps.build.outcome == 'success' }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
