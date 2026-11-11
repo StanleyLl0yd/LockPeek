@@ -239,7 +239,7 @@ int wmain(int argc, wchar_t** argv) {
     if (argc == 3 && std::wstring(argv[1]) == L"--gui-message-smoke") {
         wchar_t* end = nullptr;
         const unsigned long long raw = std::wcstoull(argv[2], &end, 10);
-        if (!raw || !end || *end != L'\\0') return 6;
+        if (!raw || !end || *end != L'\0') return 6;
         HWND window = reinterpret_cast<HWND>(static_cast<uintptr_t>(raw));
         if (!IsWindow(window)) return 7;
         // Invalid pointer payloads must not be read, deleted, or trusted.

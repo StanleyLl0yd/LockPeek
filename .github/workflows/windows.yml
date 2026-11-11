@@ -81,7 +81,7 @@ jobs:
             $privateBytes=$proc.PrivateMemorySize64
             $windowHandle=$proc.MainWindowHandle
             if (!$windowHandle) { throw 'GUI main window handle not found' }
-            & .\\x64\\Release\\LockPeekTests.exe --gui-message-smoke "$windowHandle"
+            & .\x64\Release\LockPeekTests.exe --gui-message-smoke "$windowHandle"
             if ($LASTEXITCODE -ne 0) { throw "External window message smoke failed: $LASTEXITCODE" }
             Start-Sleep -Milliseconds 400
             $proc.Refresh()
