@@ -10,7 +10,7 @@
 
 namespace lockpeek {
 constexpr unsigned kMaxHits = 128;
-constexpr DWORD kScanDeadlineMs = 18000;
+constexpr DWORD kScanDeadlineMs = 26000;
 constexpr DWORD kScanPollMs = 200;
 
 // Only the worker process calls ScanHandles. The UI never calls potentially
@@ -74,6 +74,8 @@ bool NoMatchingHandlesObserved(const ScanResult& result) noexcept;
 bool ValidWire(const WireResult& w) noexcept;
 uint32_t EncodeScanFlags(const ScanResult& result) noexcept;
 void DecodeScanFlags(ScanResult& result, uint32_t flags) noexcept;
+// Only explicitly known non-disk types may be cached as negative evidence.
+bool IsDefiniteNonDiskType(DWORD fileType) noexcept;
 // Fairly interleave handles by PID while retaining original order within each PID.
 std::vector<size_t> FairHandleOrder(const std::vector<uint32_t>& pids);
 bool ValidateExtendedHandleBuffer(const void* data, size_t bytes, size_t& count) noexcept;

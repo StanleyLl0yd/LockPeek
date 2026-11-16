@@ -131,6 +131,11 @@ void UnitTests() {
     const std::vector<uint32_t> pids{11, 11, 11, 22, 22, 33};
     const std::vector<size_t> expected{0, 3, 5, 1, 4, 2};
     Check(FairHandleOrder(pids) == expected, "interleave handles fairly across processes");
+    Check(IsDefiniteNonDiskType(FILE_TYPE_PIPE) && IsDefiniteNonDiskType(FILE_TYPE_CHAR),
+          "cache proven pipe/character file-object nonmatches");
+    Check(!IsDefiniteNonDiskType(FILE_TYPE_DISK) && !IsDefiniteNonDiskType(FILE_TYPE_UNKNOWN),
+          "never cache disk handles or ambiguous file-type failures");
+    Check(kScanDeadlineMs == 26000, "parent watchdog allows a bounded 22s worker scan and reply");
     Check(FairHandleOrder({}).empty(), "fair scheduling handles an empty snapshot");
     Check(FairHandleOrder({77, 77, 77}) == std::vector<size_t>({0, 1, 2}),
           "fair scheduling retains order within one process");
