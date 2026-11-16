@@ -64,7 +64,9 @@ constexpr ULONG kSystemExtendedHandleInformation = 64;
 constexpr LONG kLengthMismatch = static_cast<LONG>(0xC0000004u);
 constexpr LONG kBufferTooSmall = static_cast<LONG>(0xC0000023u);
 constexpr size_t kMaxSnapshot = 128u * 1024u * 1024u;
-constexpr ULONGLONG kInternalDeadlineMs = 14500;
+// Leave time for the worker to confirm matches and send a complete IPC reply
+// before the parent watchdog fires on machines with many file handles.
+constexpr ULONGLONG kInternalDeadlineMs = 22000;
 
 std::wstring ModuleName() {
     std::wstring s(32768, L'\0');
@@ -245,6 +247,10 @@ void DecodeScanFlags(ScanResult& result, uint32_t flags) noexcept {
     result.timeout = (flags & 8u) != 0;
 }
 
+bool IsDefiniteNonDiskType(DWORD fileType) noexcept {
+    return fileType == FILE_TYPE_PIPE || fileType == FILE_TYPE_CHAR;
+}
+
 // A process with many handles must not exhaust the bounded worker's time
 // before smaller processes have a chance to be inspected. Interleave the
 // first, second, third, ... eligible file handles of each PID. Use the
@@ -385,9 +391,9 @@ ScanResult ScanHandles(const std::wstring& file) {
     std::vector<Evidence> possible;
     std::unordered_set<ULONG_PTR> inaccessiblePids;
     std::unordered_map<void*, Match> positiveObjectMatches;
-    // Cache only verified *different* file IDs, never query failures or
-    // path-heuristic misses. A single FILE_OBJECT may be shared by many
-    // duplicated/inherited handles in one native snapshot.
+    // Cache only proven nonmatches: a different File ID, or a definite
+    // non-disk type. Never cache unknown types, query failures, or
+    // path-heuristic misses. Entries live only for this native snapshot.
     std::unordered_set<void*> negativeObjectMatches;
     const ULONGLONG started = GetTickCount64();
     std::vector<size_t> eligible;
@@ -449,6 +455,10 @@ ScanResult ScanHandles(const std::wstring& file) {
         // blocking filesystem-name queries against those unrelated objects.
         const DWORD kind = GetFileType(duplicated.get());
         if (kind != FILE_TYPE_DISK) {
+            // Duplicated pipe/character FILE_OBJECTs cannot reference the
+            // selected ordinary disk file. Reuse this *verified* nonmatch;
+            // FILE_TYPE_UNKNOWN could be an API failure and is never cached.
+            if (h.object && IsDefiniteNonDiskType(kind)) negativeObjectMatches.insert(h.object);
             if (kind == FILE_TYPE_UNKNOWN) {
                 ++result.uninspectable;
                 result.partial = true;
