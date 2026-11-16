@@ -35,11 +35,15 @@ struct ScanResult {
     bool canceled = false;
     uint32_t inaccessible = 0;
     uint32_t uninspectable = 0;
+    uint32_t eligibleHandles = 0;
+    uint32_t examinedHandles = 0;
+    uint32_t cachedNegativeHandles = 0;
+    uint32_t elapsedMs = 0;
     std::vector<Hit> hits;
 };
 
 // Fixed-size, versioned IPC payload. No C++ objects or pointers cross the pipe.
-constexpr uint32_t kMagic = 0x324B504C; // LPK2, little endian
+constexpr uint32_t kMagic = 0x334B504C; // LPK3, little endian: bounded scan diagnostics
 struct WireHit {
     uint32_t pid;
     uint32_t match;
@@ -54,12 +58,16 @@ struct WireResult {
     uint32_t inaccessible = 0;
     uint32_t uninspectable = 0;
     uint32_t count = 0;
+    uint32_t eligibleHandles = 0;
+    uint32_t examinedHandles = 0;
+    uint32_t cachedNegativeHandles = 0;
+    uint32_t elapsedMs = 0;
     uint64_t targetVolume = 0;
     std::array<uint8_t, 16> targetFileId{};
     WireHit hits[kMaxHits]{};
 };
 static_assert(sizeof(WireHit) == 16);
-static_assert(sizeof(WireResult) == 56 + 16 * kMaxHits);
+static_assert(sizeof(WireResult) == 72 + 16 * kMaxHits);
 
 // A weak observation only: an incomplete scan cannot prove release.
 bool NoMatchingHandlesObserved(const ScanResult& result) noexcept;

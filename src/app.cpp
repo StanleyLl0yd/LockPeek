@@ -236,7 +236,13 @@ class App {
             L"An open handle is not proof that deletion is blocked. An empty result is not proof the file is free.",
             L"Открытый дескриптор не доказывает блокировку удаления. Пустой результат не гарантирует, что файл свободен.");
         if (result_.canceled) summary = Text(L"Scan canceled", L"Проверка отменена");
-        else if (result_.timeout) summary = Text(L"Scan timed out", L"Время проверки истекло");
+        else if (result_.timeout) {
+            summary = result_.hits.empty() ?
+                std::wstring(Text(L"Scan timed out", L"Время проверки истекло")) :
+                std::wstring(Text(L"Processes found: ", L"Найдено процессов: ")) +
+                    std::to_wstring(result_.hits.size()) +
+                    Text(L" (time limit reached)", L" (время проверки истекло)");
+        }
         else if (result_.win32Error) {
             summary = Text(L"Windows error: ", L"Ошибка Windows: ") + std::to_wstring(result_.win32Error);
             const auto detail = WindowsMessage(result_.win32Error);
@@ -262,6 +268,11 @@ class App {
         if (result_.inaccessible) {
             details += Text(L" Inaccessible processes: ", L" Нет доступа к процессам: ") +
                        std::to_wstring(result_.inaccessible) + L".";
+        }
+        if (result_.timeout && result_.eligibleHandles) {
+            details += Text(L" Examined handles: ", L" Проверено дескрипторов: ") +
+                       std::to_wstring(result_.examinedHandles) + L"/" +
+                       std::to_wstring(result_.eligibleHandles) + L".";
         }
         ShowStatus(summary, details);
     }
@@ -424,6 +435,13 @@ class App {
             report += Text(L"Scan timed out. Results incomplete.\r\n",
                            L"Время проверки истекло. Результат неполный.\r\n");
         }
+        report += Text(L"Scan diagnostics: examined ", L"Диагностика сканирования: проверено ") +
+                  std::to_wstring(result_.examinedHandles) + L"/" +
+                  std::to_wstring(result_.eligibleHandles) +
+                  Text(L" eligible handles; cached skips ", L" подходящих дескрипторов; пропущено по кэшу ") +
+                  std::to_wstring(result_.cachedNegativeHandles) +
+                  Text(L"; elapsed ms ", L"; длительность, мс ") +
+                  std::to_wstring(result_.elapsedMs) + L"\r\n";
         if (result_.win32Error) {
             report += Text(L"Windows error: ", L"Ошибка Windows: ") +
                       std::to_wstring(result_.win32Error) + L"\r\n";
