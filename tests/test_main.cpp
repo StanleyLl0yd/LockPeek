@@ -87,6 +87,15 @@ void UnitTests() {
     WireResult wire{};
     wire.size = sizeof(wire);
     Check(ValidWire(wire), "empty valid IPC payload");
+    wire.eligibleHandles = 2;
+    wire.examinedHandles = 3;
+    Check(!ValidWire(wire), "reject IPC examined handle count beyond eligible");
+    wire.examinedHandles = 2;
+    wire.cachedNegativeHandles = 3;
+    Check(!ValidWire(wire), "reject IPC negative cache count beyond examined");
+    wire.cachedNegativeHandles = 1;
+    Check(ValidWire(wire), "accept consistent bounded scan diagnostic counters");
+    wire.eligibleHandles = wire.examinedHandles = wire.cachedNegativeHandles = 0;
     wire.size = 0;
     Check(!ValidWire(wire), "reject mismatched IPC payload size");
     wire.size = sizeof(wire);
@@ -131,7 +140,7 @@ void UnitTests() {
     timedOut.targetIdentityAvailable = true;
     Check(!NoMatchingHandlesObserved(timedOut),
           "internal scan timeout can never imply an open file was released");
-    Check(sizeof(WireResult) == 56 + 16 * kMaxHits, "versioned IPC carries target file identity");
+    Check(sizeof(WireResult) == 72 + 16 * kMaxHits, "versioned IPC carries target file identity and scan statistics");
     std::array<std::byte, 56> snap{};
     size_t count = 7;
     Check(!ValidateExtendedHandleBuffer(snap.data(), 15, count) && count == 0,

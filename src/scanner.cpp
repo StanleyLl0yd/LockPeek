@@ -226,6 +226,7 @@ bool NoMatchingHandlesObserved(const ScanResult& result) noexcept {
 bool ValidWire(const WireResult& w) noexcept {
     if (w.magic != kMagic || w.size != sizeof(WireResult) || w.count > kMaxHits) return false;
     if ((w.flags & ~15u) || ((w.flags & 8u) && !(w.flags & 1u))) return false;
+    if (w.examinedHandles > w.eligibleHandles || w.cachedNegativeHandles > w.examinedHandles) return false;
     for (uint32_t i = 0; i < w.count; ++i) {
         if (!w.hits[i].pid || (w.hits[i].match != 1 && w.hits[i].match != 2)) return false;
     }
@@ -384,6 +385,10 @@ ScanResult ScanHandles(const std::wstring& file) {
     std::vector<Evidence> possible;
     std::unordered_set<ULONG_PTR> inaccessiblePids;
     std::unordered_map<void*, Match> positiveObjectMatches;
+    // Cache only verified *different* file IDs, never query failures or
+    // path-heuristic misses. A single FILE_OBJECT may be shared by many
+    // duplicated/inherited handles in one native snapshot.
+    std::unordered_set<void*> negativeObjectMatches;
     const ULONGLONG started = GetTickCount64();
     std::vector<size_t> eligible;
     std::vector<uint32_t> eligiblePids;
@@ -396,6 +401,7 @@ ScanResult ScanHandles(const std::wstring& file) {
         eligible.push_back(i);
         eligiblePids.push_back(static_cast<uint32_t>(h.pid));
     }
+    result.eligibleHandles = static_cast<uint32_t>(eligible.size());
     const auto order = FairHandleOrder(eligiblePids);
     for (size_t position : order) {
         if (GetTickCount64() - started >= kInternalDeadlineMs) {
@@ -404,6 +410,7 @@ ScanResult ScanHandles(const std::wstring& file) {
             break;
         }
         const auto& h = snapshot.handles[eligible[position]];
+        ++result.examinedHandles;
         auto [it, inserted] = processes.try_emplace(h.pid);
         if (inserted) {
             it->second.duplicator.reset(OpenProcess(PROCESS_DUP_HANDLE, FALSE, static_cast<DWORD>(h.pid)));
@@ -415,6 +422,10 @@ ScanResult ScanHandles(const std::wstring& file) {
             }
         }
         if (!it->second.duplicator.valid()) continue;
+        if (h.object && negativeObjectMatches.contains(h.object)) {
+            ++result.cachedNegativeHandles;
+            continue;
+        }
         // Several process handles can refer to the same underlying FILE_OBJECT.
         // Cache only confirmed positive matches; failures are never cached
         // because another handle may have more query-capable access rights.
@@ -450,6 +461,7 @@ ScanResult ScanHandles(const std::wstring& file) {
         if (hasId && FileIdentity(duplicated.get(), candidate)) {
             matched = SameIdentity(targetId, candidate);
             match = Match::FileId;
+            if (!matched && h.object) negativeObjectMatches.insert(h.object);
         } else {
             const std::wstring actual = NormalizePath(FinalPath(duplicated.get()));
             if (!actual.empty()) matched = SamePath(actual, physicalTarget) || SamePath(actual, targetPath);
@@ -503,6 +515,7 @@ ScanResult ScanHandles(const std::wstring& file) {
     for (const auto& hit : result.hits) {
         if (!hit.creation) { result.partial = true; break; }
     }
+    result.elapsedMs = static_cast<uint32_t>(GetTickCount64() - started);
     return result;
 }
 
@@ -525,6 +538,10 @@ int RunScanWorker(const std::wstring& filename) {
     out.inaccessible = result.inaccessible;
     out.uninspectable = result.uninspectable;
     out.count = static_cast<uint32_t>(std::min<size_t>(result.hits.size(), kMaxHits));
+    out.eligibleHandles = result.eligibleHandles;
+    out.examinedHandles = result.examinedHandles;
+    out.cachedNegativeHandles = result.cachedNegativeHandles;
+    out.elapsedMs = result.elapsedMs;
     out.targetVolume = result.targetVolume;
     out.targetFileId = result.targetFileId;
     for (uint32_t i = 0; i < out.count; ++i) {
@@ -696,6 +713,10 @@ ScanResult RunIsolatedScan(const std::wstring& filename, const volatile LONG* ca
     result.targetFileId = wire.targetFileId;
     result.inaccessible = wire.inaccessible;
     result.uninspectable = wire.uninspectable;
+    result.eligibleHandles = wire.eligibleHandles;
+    result.examinedHandles = wire.examinedHandles;
+    result.cachedNegativeHandles = wire.cachedNegativeHandles;
+    result.elapsedMs = wire.elapsedMs;
     for (uint32_t i = 0; i < wire.count; ++i) {
         const auto& h = wire.hits[i];
         result.hits.push_back({h.pid, h.creation, static_cast<Match>(h.match), {}});
