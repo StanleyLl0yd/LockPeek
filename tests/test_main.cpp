@@ -96,6 +96,42 @@ void UnitTests() {
     wire.cachedNegativeHandles = 1;
     Check(ValidWire(wire), "accept consistent bounded scan diagnostic counters");
     wire.eligibleHandles = wire.examinedHandles = wire.cachedNegativeHandles = 0;
+    WireResult access{};
+    access.size = sizeof(access);
+    access.eligibleHandles = access.examinedHandles = access.inaccessible = 2;
+    access.inaccessibleDetailsCount = 2;
+    access.inaccessibleDetails[0] = {123, ERROR_ACCESS_DENIED, 77};
+    access.inaccessibleDetails[1] = {456, ERROR_INVALID_PARAMETER, 0};
+    Check(ValidWire(access), "accept bounded unique inaccessible PIDs and Win32 errors");
+    access.inaccessibleDetails[1].pid = 123;
+    Check(!ValidWire(access), "reject duplicate inaccessible PID in worker response");
+    access.inaccessibleDetails[1].pid = 456;
+    access.inaccessibleDetails[1].win32Error = 0;
+    Check(!ValidWire(access), "reject inaccessible PID with no error code");
+    access.inaccessibleDetails[1].win32Error = ERROR_INVALID_PARAMETER;
+    access.inaccessibleDetailsCount = 1;
+    Check(!ValidWire(access), "reject silently missing inaccessible PID details");
+    access.inaccessibleDetailsCount = kMaxInaccessibleDetails + 1;
+    Check(!ValidWire(access), "reject excessive inaccessible diagnostic count");
+    access.inaccessibleDetailsCount = 2;
+    access.inaccessible = 3;
+    Check(!ValidWire(access), "reject more failed PIDs than examined handles");
+    access.inaccessible = 2;
+    access.inaccessibleDetails[0].pid = 0;
+    Check(!ValidWire(access), "reject zero PID for access failure");
+    access.inaccessibleDetails[0].pid = 123;
+    Check(ValidWire(access), "accept restored inaccessible diagnostic records");
+    Check(sizeof(WireResult) <= 8192, "worker IPC must fit pipe buffer");
+    WireResult capped{};
+    capped.size = sizeof(capped);
+    capped.eligibleHandles = capped.examinedHandles = capped.inaccessible = kMaxInaccessibleDetails + 1;
+    capped.inaccessibleDetailsCount = kMaxInaccessibleDetails;
+    for (uint32_t i = 0; i < kMaxInaccessibleDetails; ++i) {
+        capped.inaccessibleDetails[i] = {1000 + i, ERROR_ACCESS_DENIED, 0};
+    }
+    Check(ValidWire(capped), "accept capped diagnostic list with explicitly omitted PIDs");
+    --capped.inaccessibleDetailsCount;
+    Check(!ValidWire(capped), "reject incomplete diagnostic list below the permitted cap");
     wire.size = 0;
     Check(!ValidWire(wire), "reject mismatched IPC payload size");
     wire.size = sizeof(wire);
@@ -145,7 +181,8 @@ void UnitTests() {
     timedOut.targetIdentityAvailable = true;
     Check(!NoMatchingHandlesObserved(timedOut),
           "internal scan timeout can never imply an open file was released");
-    Check(sizeof(WireResult) == 72 + 16 * kMaxHits, "versioned IPC carries target file identity and scan statistics");
+    Check(sizeof(WireResult) == 80 + 16 * kMaxHits + 16 * kMaxInaccessibleDetails,
+          "LPK4 IPC carries bounded access failures and scan counters");
     std::array<std::byte, 56> snap{};
     size_t count = 7;
     Check(!ValidateExtendedHandleBuffer(snap.data(), 15, count) && count == 0,
@@ -194,6 +231,26 @@ void UnitTests() {
     PopulateProcessNames(invalidMetadata);
     Check(invalidMetadata.partial && invalidMetadata.hits.empty(),
           "uninspectable process identity is marked incomplete and invalid PID removed");
+    ScanResult staleDiagnostic{};
+    staleDiagnostic.inaccessibleProcesses.push_back({GetCurrentProcessId(), ERROR_ACCESS_DENIED, 1, {}});
+    staleDiagnostic.inaccessibleProcesses.push_back({GetCurrentProcessId(), ERROR_ACCESS_DENIED, 0, {}});
+    PopulateProcessNames(staleDiagnostic);
+    Check(staleDiagnostic.inaccessibleProcesses[0].image.empty() &&
+          staleDiagnostic.inaccessibleProcesses[1].image.empty(),
+          "never attribute name to recycled or unverified process PID");
+    FILETIME created{}, exited{}, kernel{}, user{};
+    if (GetProcessTimes(GetCurrentProcess(), &created, &exited, &kernel, &user)) {
+        ULARGE_INTEGER identity{};
+        identity.LowPart = created.dwLowDateTime;
+        identity.HighPart = created.dwHighDateTime;
+        ScanResult namedDiagnostic{};
+        namedDiagnostic.inaccessibleProcesses.push_back({GetCurrentProcessId(), ERROR_ACCESS_DENIED, identity.QuadPart, {}});
+        PopulateProcessNames(namedDiagnostic);
+        Check(!namedDiagnostic.inaccessibleProcesses[0].image.empty(),
+              "attribute basename only when process creation time matches");
+    } else {
+        Check(false, "obtain current process identity for basename regression test");
+    }
 }
 void IntegrationTests() {
     wchar_t directory[MAX_PATH + 1]{};

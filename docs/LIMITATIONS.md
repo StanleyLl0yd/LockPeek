@@ -1,7 +1,7 @@
 # Known limitations
 
 - Windows 10 and Windows 11 x64 are intended targets; 47/47 automated checks passed on a Windows Server 2025 GitHub Actions runner, but neither clean Windows 10 nor clean Windows 11 has yet been manually verified.
-- Administrator elevation may expand visibility, but protected processes remain intentionally inaccessible.
+- Administrator elevation may expand visibility, but protected processes remain intentionally inaccessible. The copied report lists up to 256 unique PIDs for which `PROCESS_DUP_HANDLE` failed, groups their Win32 error codes, and shows basenames only after creation-time identity verification. The full inaccessible PID count may exceed the capped list; omitted records are identified. Access errors do not prove PPL status or use of the selected file.
 - Windows `SystemExtendedHandleInformation` is not a documented ABI. Scans fail or are explicitly partial when it cannot be used safely. No Restart Manager fallback is provided.
 - The tool shows open matching file handles, **not** which sharing flags deny deletion. A found process need not be a blocker, and an empty list is not proof of freedom.
 - Maximum of 128 distinct matching process IDs per scan; truncated results are clearly marked. Snapshot allocation cap: 128 MiB.

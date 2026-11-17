@@ -14,6 +14,7 @@
 #include <mutex>
 #include <new>
 #include <iterator>
+#include <map>
 #include <string>
 #include <thread>
 #include <utility>
@@ -454,6 +455,33 @@ class App {
         if (result_.inaccessible) {
             report += Text(L"Inaccessible processes: ", L"Недоступных процессов: ") +
                       std::to_wstring(result_.inaccessible) + L"\r\n";
+            const auto count = result_.inaccessibleProcesses.size();
+            report += Text(L"Access diagnostics (unique PIDs, PROCESS_DUP_HANDLE): ",
+                           L"Диагностика доступа (уникальные PID, PROCESS_DUP_HANDLE): ") +
+                      std::to_wstring(count) + L"/" + std::to_wstring(result_.inaccessible) + L"\r\n";
+            if (count < result_.inaccessible) {
+                report += Text(L"Details unavailable or limit reached; remaining PIDs omitted.\r\n",
+                               L"Детали недоступны или достигнут лимит; остальные PID пропущены.\r\n");
+            }
+            std::map<DWORD, uint32_t> byError;
+            for (const auto& entry : result_.inaccessibleProcesses) ++byError[entry.win32Error];
+            report += Text(L"Access failure reasons (captured PIDs):\r\n",
+                           L"Причины отказов доступа (учтённые PID):\r\n");
+            for (const auto& [error, failures] : byError) {
+                report += L"  Win32 " + std::to_wstring(error) + L": " + std::to_wstring(failures);
+                const auto description = WindowsMessage(error);
+                if (!description.empty()) report += L" (" + description + L")";
+                report += L"\r\n";
+            }
+            report += Text(L"Inaccessible PID details (name only after PID identity verification):\r\n",
+                           L"Недоступные PID (имя только при подтверждении идентичности PID):\r\n");
+            for (const auto& entry : result_.inaccessibleProcesses) {
+                report += L"  PID " + std::to_wstring(entry.pid) + L" | " +
+                          (entry.image.empty() ? Text(L"[name unavailable]", L"[имя недоступно]") : entry.image) +
+                          L" | Win32 " + std::to_wstring(entry.win32Error) + L"\r\n";
+            }
+            report += Text(L"Access errors do not prove PPL protection or use of the selected file.\r\n",
+                           L"Ошибки доступа не доказывают защиту PPL или использование выбранного файла.\r\n");
         }
         report += Text(L"Not proof of a deletion lock. ", L"Не доказывает блокировку удаления. ");
         report += (result_.partial || result_.timeout || result_.win32Error) ?
