@@ -122,6 +122,16 @@ void UnitTests() {
     access.inaccessibleDetails[0].pid = 123;
     Check(ValidWire(access), "accept restored inaccessible diagnostic records");
     Check(sizeof(WireResult) <= 8192, "worker IPC must fit pipe buffer");
+    WireResult capped{};
+    capped.size = sizeof(capped);
+    capped.eligibleHandles = capped.examinedHandles = capped.inaccessible = kMaxInaccessibleDetails + 1;
+    capped.inaccessibleDetailsCount = kMaxInaccessibleDetails;
+    for (uint32_t i = 0; i < kMaxInaccessibleDetails; ++i) {
+        capped.inaccessibleDetails[i] = {1000 + i, ERROR_ACCESS_DENIED, 0};
+    }
+    Check(ValidWire(capped), "accept capped diagnostic list with explicitly omitted PIDs");
+    --capped.inaccessibleDetailsCount;
+    Check(!ValidWire(capped), "reject incomplete diagnostic list below the permitted cap");
     wire.size = 0;
     Check(!ValidWire(wire), "reject mismatched IPC payload size");
     wire.size = sizeof(wire);
@@ -228,6 +238,19 @@ void UnitTests() {
     Check(staleDiagnostic.inaccessibleProcesses[0].image.empty() &&
           staleDiagnostic.inaccessibleProcesses[1].image.empty(),
           "never attribute name to recycled or unverified process PID");
+    FILETIME created{}, exited{}, kernel{}, user{};
+    if (GetProcessTimes(GetCurrentProcess(), &created, &exited, &kernel, &user)) {
+        ULARGE_INTEGER identity{};
+        identity.LowPart = created.dwLowDateTime;
+        identity.HighPart = created.dwHighDateTime;
+        ScanResult namedDiagnostic{};
+        namedDiagnostic.inaccessibleProcesses.push_back({GetCurrentProcessId(), ERROR_ACCESS_DENIED, identity.QuadPart, {}});
+        PopulateProcessNames(namedDiagnostic);
+        Check(!namedDiagnostic.inaccessibleProcesses[0].image.empty(),
+              "attribute basename only when process creation time matches");
+    } else {
+        Check(false, "obtain current process identity for basename regression test");
+    }
 }
 void IntegrationTests() {
     wchar_t directory[MAX_PATH + 1]{};
