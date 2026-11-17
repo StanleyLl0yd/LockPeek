@@ -13,6 +13,13 @@ GitHub Actions is configured to build Win32 x64 with `/MT`, run these tests, val
 - Executable: 230,400 bytes; only seven Windows system DLL imports. No dynamic VC++ CRT imports; manifest/CFG/ASLR/DEP checks passed. GUI idle startup and forged-message smoke passed on the server runner. The binary's SHA-256 must be read from the corresponding run's `build-info.txt`.
 - **None** of these checks qualifies a clean Windows 10/11 client deployment or a stable 14.52+ C++23 build.
 
+## Additional access diagnostics acceptance (v0.1.5)
+
+- Copy report after ordinary and elevated scans. Check `PROCESS_DUP_HANDLE` access failure total, per-error counts, and individual PID/error records; preserve the existing one-line GUI summary.
+- Check that a PID whose creation time cannot be verified appears as `[name unavailable]`, not a potentially reused image name; name attribution must not request extra privileges or misidentify the process.
+- Reject malformed LPK4 IPC (duplicate/zero PIDs, missing Win32 errors, inconsistent counts, excessive detail count). A record count over 256 must be reported as capped, not silently complete.
+- Compare two scans on the same client. Access failure counts are observations and do not establish PPL protection, file ownership or a deletion lock. Nothing is logged persistently or sent over the network.
+
 ## Client Windows 10/11 evidence procedure
 
 Use two fresh **x64 client** virtual machines, Windows 10 22H2 and Windows 11. Install neither a standalone VC++ Redistributable nor an additional .NET SDK/Desktop Runtime before the first LockPeek test. Use the **same** unsigned EXE from a single, exact-head, stable-MSVC qualification artifact. Keep its `build-info.txt` and SHA-256. A registry software listing alone cannot establish that an image is clean.

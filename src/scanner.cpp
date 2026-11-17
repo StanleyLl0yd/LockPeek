@@ -229,6 +229,15 @@ bool ValidWire(const WireResult& w) noexcept {
     if (w.magic != kMagic || w.size != sizeof(WireResult) || w.count > kMaxHits) return false;
     if ((w.flags & ~15u) || ((w.flags & 8u) && !(w.flags & 1u))) return false;
     if (w.examinedHandles > w.eligibleHandles || w.cachedNegativeHandles > w.examinedHandles) return false;
+    if (w.inaccessible > w.examinedHandles ||
+        w.inaccessibleDetailsCount != std::min(w.inaccessible, static_cast<uint32_t>(kMaxInaccessibleDetails))) return false;
+    for (uint32_t i = 0; i < w.inaccessibleDetailsCount; ++i) {
+        const auto& entry = w.inaccessibleDetails[i];
+        if (!entry.pid || !entry.win32Error) return false;
+        for (uint32_t j = 0; j < i; ++j) {
+            if (w.inaccessibleDetails[j].pid == entry.pid) return false;
+        }
+    }
     for (uint32_t i = 0; i < w.count; ++i) {
         if (!w.hits[i].pid || (w.hits[i].match != 1 && w.hits[i].match != 2)) return false;
     }
@@ -419,11 +428,18 @@ ScanResult ScanHandles(const std::wstring& file) {
         ++result.examinedHandles;
         auto [it, inserted] = processes.try_emplace(h.pid);
         if (inserted) {
-            it->second.duplicator.reset(OpenProcess(PROCESS_DUP_HANDLE, FALSE, static_cast<DWORD>(h.pid)));
+            // Capture the failure immediately before any other Win32 call overwrites GetLastError.
+            HANDLE duplicateAccess = OpenProcess(PROCESS_DUP_HANDLE, FALSE, static_cast<DWORD>(h.pid));
+            const DWORD duplicateError = duplicateAccess ? ERROR_SUCCESS : GetLastError();
+            it->second.duplicator.reset(duplicateAccess);
             it->second.identity.reset(OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, static_cast<DWORD>(h.pid)));
             if (it->second.identity.valid()) it->second.creation = CreationTime(it->second.identity.get());
             if (!it->second.duplicator.valid()) {
-                inaccessiblePids.insert(h.pid);
+                if (inaccessiblePids.insert(h.pid).second &&
+                    result.inaccessibleProcesses.size() < kMaxInaccessibleDetails) {
+                    result.inaccessibleProcesses.push_back({static_cast<uint32_t>(h.pid),
+                        duplicateError ? duplicateError : ERROR_GEN_FAILURE, it->second.creation, {}});
+                }
                 result.partial = true;
             }
         }
@@ -546,6 +562,11 @@ int RunScanWorker(const std::wstring& filename) {
     out.ntstatus = result.ntstatus;
     out.flags = EncodeScanFlags(result);
     out.inaccessible = result.inaccessible;
+    out.inaccessibleDetailsCount = static_cast<uint32_t>(result.inaccessibleProcesses.size());
+    for (uint32_t i = 0; i < out.inaccessibleDetailsCount; ++i) {
+        const auto& entry = result.inaccessibleProcesses[i];
+        out.inaccessibleDetails[i] = {entry.pid, entry.win32Error, entry.creation};
+    }
     out.uninspectable = result.uninspectable;
     out.count = static_cast<uint32_t>(std::min<size_t>(result.hits.size(), kMaxHits));
     out.eligibleHandles = result.eligibleHandles;
@@ -563,6 +584,19 @@ int RunScanWorker(const std::wstring& filename) {
 }
 
 void PopulateProcessNames(ScanResult& result) {
+    // Names are optional; never attribute a recycled or unverifiable PID.
+    for (auto& entry : result.inaccessibleProcesses) {
+        if (!entry.creation) continue;
+        Handle process(OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, entry.pid));
+        if (!process.valid() || CreationTime(process.get()) != entry.creation) continue;
+        std::wstring buf(32768, L'\0');
+        DWORD size = static_cast<DWORD>(buf.size());
+        if (QueryFullProcessImageNameW(process.get(), 0, buf.data(), &size) && size) {
+            buf.resize(size);
+            const auto slash = buf.find_last_of(L"\\/");
+            entry.image = slash == std::wstring::npos ? std::move(buf) : buf.substr(slash + 1);
+        }
+    }
     for (auto& hit : result.hits) {
         Handle process(OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, hit.pid));
         if (!process.valid()) {
@@ -722,6 +756,11 @@ ScanResult RunIsolatedScan(const std::wstring& filename, const volatile LONG* ca
     result.targetVolume = wire.targetVolume;
     result.targetFileId = wire.targetFileId;
     result.inaccessible = wire.inaccessible;
+    result.inaccessibleProcesses.reserve(wire.inaccessibleDetailsCount);
+    for (uint32_t i = 0; i < wire.inaccessibleDetailsCount; ++i) {
+        const auto& entry = wire.inaccessibleDetails[i];
+        result.inaccessibleProcesses.push_back({entry.pid, entry.win32Error, entry.creation, {}});
+    }
     result.uninspectable = wire.uninspectable;
     result.eligibleHandles = wire.eligibleHandles;
     result.examinedHandles = wire.examinedHandles;

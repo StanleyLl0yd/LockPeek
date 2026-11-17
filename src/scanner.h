@@ -10,6 +10,8 @@
 
 namespace lockpeek {
 constexpr unsigned kMaxHits = 128;
+// Keep the fixed IPC record below the 8 KiB anonymous pipe capacity.
+constexpr unsigned kMaxInaccessibleDetails = 256;
 constexpr DWORD kScanDeadlineMs = 26000;
 constexpr DWORD kScanPollMs = 200;
 
@@ -23,6 +25,12 @@ struct Hit {
     std::wstring image;
     std::wstring service; // available Windows service display name(s)
 };
+struct InaccessibleProcess {
+    uint32_t pid = 0;
+    DWORD win32Error = ERROR_SUCCESS;
+    uint64_t creation = 0; // zero means name attribution is unsafe
+    std::wstring image; // basename, enriched by parent only after PID identity check
+};
 struct ScanResult {
     DWORD win32Error = ERROR_SUCCESS;
     uint32_t ntstatus = 0;
@@ -33,7 +41,8 @@ struct ScanResult {
     std::array<uint8_t, 16> targetFileId{};
     bool timeout = false;
     bool canceled = false;
-    uint32_t inaccessible = 0;
+    uint32_t inaccessible = 0; // all unique PIDs with failed PROCESS_DUP_HANDLE
+    std::vector<InaccessibleProcess> inaccessibleProcesses; // capped details
     uint32_t uninspectable = 0;
     uint32_t eligibleHandles = 0;
     uint32_t examinedHandles = 0;
@@ -43,12 +52,18 @@ struct ScanResult {
 };
 
 // Fixed-size, versioned IPC payload. No C++ objects or pointers cross the pipe.
-constexpr uint32_t kMagic = 0x334B504C; // LPK3, little endian: bounded scan diagnostics
+constexpr uint32_t kMagic = 0x344B504C; // LPK4: bounded access-denial diagnostics
 struct WireHit {
     uint32_t pid;
     uint32_t match;
     uint64_t creation;
 };
+struct WireInaccessible {
+    uint32_t pid;
+    uint32_t win32Error;
+    uint64_t creation;
+};
+static_assert(sizeof(WireInaccessible) == 16);
 struct WireResult {
     uint32_t magic = kMagic;
     uint32_t size = 0;
@@ -62,12 +77,15 @@ struct WireResult {
     uint32_t examinedHandles = 0;
     uint32_t cachedNegativeHandles = 0;
     uint32_t elapsedMs = 0;
+    uint32_t inaccessibleDetailsCount = 0;
     uint64_t targetVolume = 0;
     std::array<uint8_t, 16> targetFileId{};
     WireHit hits[kMaxHits]{};
+    WireInaccessible inaccessibleDetails[kMaxInaccessibleDetails]{};
 };
 static_assert(sizeof(WireHit) == 16);
-static_assert(sizeof(WireResult) == 72 + 16 * kMaxHits);
+static_assert(sizeof(WireResult) == 80 + 16 * kMaxHits + 16 * kMaxInaccessibleDetails);
+static_assert(sizeof(WireResult) <= 8192, "Worker must fit pipe buffer");
 
 // A weak observation only: an incomplete scan cannot prove release.
 bool NoMatchingHandlesObserved(const ScanResult& result) noexcept;
