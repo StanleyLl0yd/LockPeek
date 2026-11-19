@@ -30,7 +30,7 @@ $LoadConfig | Out-File -Encoding utf8 (Join-Path $ReportDirectory 'loadconfig.tx
 foreach ($name in @('vcruntime140.dll','vcruntime140_1.dll','msvcp140.dll','ucrtbase.dll','hostfxr.dll','hostpolicy.dll','coreclr.dll')) {
   if ($Dependencies -match [regex]::Escape($name)) { throw "Dynamic runtime dependency: $name" }
 }
-$Allowed=@('KERNEL32.DLL','USER32.DLL','GDI32.DLL','COMCTL32.DLL','COMDLG32.DLL','SHELL32.DLL','ADVAPI32.DLL','OLE32.DLL','OLEAUT32.DLL','SHLWAPI.DLL','NTDLL.DLL','IMM32.DLL')
+$Allowed=@('KERNEL32.DLL','USER32.DLL','GDI32.DLL','COMCTL32.DLL','COMDLG32.DLL','SHELL32.DLL','ADVAPI32.DLL','OLE32.DLL','OLEAUT32.DLL','SHLWAPI.DLL','NTDLL.DLL','IMM32.DLL','API-MS-WIN-CORE-SYNCH-L1-2-0.DLL')
 $ImportLines=[regex]::Matches($Dependencies, '(?im)^\s*([A-Za-z0-9_.-]+\.dll)\s*$')
 foreach ($entry in $ImportLines) {
   $name=$entry.Groups[1].Value.ToUpperInvariant()

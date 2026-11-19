@@ -270,6 +270,12 @@ class App {
             details += Text(L" Inaccessible processes: ", L" Нет доступа к процессам: ") +
                        std::to_wstring(result_.inaccessible) + L".";
         }
+        if (result_.debugPrivilegeStatus == DebugPrivilegeStatus::Enabled) {
+            details += L" SeDebugPrivilege: ON.";
+        } else if (result_.debugPrivilegeStatus == DebugPrivilegeStatus::NotAssigned ||
+                   result_.debugPrivilegeStatus == DebugPrivilegeStatus::Failed) {
+            details += L" SeDebugPrivilege: unavailable.";
+        }
         if (result_.timeout && result_.eligibleHandles) {
             details += Text(L" Examined handles: ", L" Проверено дескрипторов: ") +
                        std::to_wstring(result_.examinedHandles) + L"/" +
@@ -443,6 +449,32 @@ class App {
                   std::to_wstring(result_.cachedNegativeHandles) +
                   Text(L"; elapsed ms ", L"; длительность, мс ") +
                   std::to_wstring(result_.elapsedMs) + L"\r\n";
+        report += Text(L"Concurrent scanner workers: ", L"Параллельных потоков сканирования: ") +
+                  std::to_wstring(result_.workersUsed) + L"\r\n";
+        const wchar_t* debugState = L"not elevated";
+        switch (result_.debugPrivilegeStatus) {
+        case DebugPrivilegeStatus::Enabled: debugState = L"enabled and verified"; break;
+        case DebugPrivilegeStatus::NotAssigned: debugState = L"not assigned to token"; break;
+        case DebugPrivilegeStatus::Failed: debugState = L"verification/activation failed"; break;
+        default: break;
+        }
+        report += std::wstring(L"SeDebugPrivilege: ") + debugState +
+                  Text(L"; Win32 error: ", L"; ошибка Win32: ") +
+                  std::to_wstring(result_.debugPrivilegeError) + L"\r\n";
+        if (result_.slowestOperationStage != ScanStage::None) {
+            const wchar_t* stage = L"unknown";
+            switch (result_.slowestOperationStage) {
+            case ScanStage::OpenProcess: stage = L"OpenProcess"; break;
+            case ScanStage::Duplicate: stage = L"DuplicateHandle"; break;
+            case ScanStage::FileType: stage = L"GetFileType"; break;
+            case ScanStage::FileId: stage = L"FileIdInfo"; break;
+            case ScanStage::Path: stage = L"FinalPath"; break;
+            default: break;
+            }
+            report += std::wstring(Text(L"Slowest measured operation: ", L"Самая медленная операция: ")) +
+                      stage + L" | PID " + std::to_wstring(result_.slowestOperationPid) +
+                      L" | " + std::to_wstring(result_.slowestOperationMs) + L" ms\r\n";
+        }
         if (result_.win32Error) {
             report += Text(L"Windows error: ", L"Ошибка Windows: ") +
                       std::to_wstring(result_.win32Error) + L"\r\n";

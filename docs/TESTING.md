@@ -13,6 +13,13 @@ GitHub Actions is configured to build Win32 x64 with `/MT`, run these tests, val
 - Executable: 230,400 bytes; only seven Windows system DLL imports. No dynamic VC++ CRT imports; manifest/CFG/ASLR/DEP checks passed. GUI idle startup and forged-message smoke passed on the server runner. The binary's SHA-256 must be read from the corresponding run's `build-info.txt`.
 - **None** of these checks qualifies a clean Windows 10/11 client deployment or a stable 14.52+ C++23 build.
 
+## Elevated performance and debug privilege acceptance (v0.1.6)
+
+- Compare copied reports for the **same locally open file** after a normal and an admin scan. Confirm both identify the same holder by File ID, list the elapsed time and the number of worker threads, and include the slowest stage/PID when measured.
+- In normal mode SeDebugPrivilege must say *not elevated*, with one worker. In elevated mode the isolated worker must report whether SeDebugPrivilege was **enabled and verified**, missing from its token, or failed (with Win32 error); no automatic elevation and no permanent token change in the main GUI.
+- Verify the exact client timing; hosted Windows Server CI cannot establish a speed-up on the original Windows machine. Enabling debug privilege may increase inspection work; a new timeout must remain explicit, not hidden.
+- Verify no PPL bypass is attempted, no PROCESS_ALL_ACCESS requests, and no forced handle closes or external process termination. Run with limited account and deliberate Win32 denial conditions. Confirm a shared FILE_OBJECT never crosses shard boundaries, and number of workers never exceeds four.
+
 ## Additional access diagnostics acceptance (v0.1.5)
 
 - Copy report after ordinary and elevated scans. Check `PROCESS_DUP_HANDLE` access failure total, per-error counts, and individual PID/error records; preserve the existing one-line GUI summary.
