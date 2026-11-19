@@ -304,6 +304,8 @@ bool ValidWire(const WireResult& w) noexcept {
     if (w.magic != kMagic || w.size != sizeof(WireResult) || w.count > kMaxHits) return false;
     if ((w.flags & ~15u) || ((w.flags & 8u) && !(w.flags & 1u))) return false;
     if (w.examinedHandles > w.eligibleHandles || w.cachedNegativeHandles > w.examinedHandles) return false;
+    if (w.skippedPathQueries > w.uninspectable || w.skippedPathQueries > w.examinedHandles ||
+        (w.skippedPathQueries && (w.flags & 5u) != 5u)) return false;
     if (w.inaccessible > w.examinedHandles ||
         w.inaccessibleDetailsCount != std::min(w.inaccessible, static_cast<uint32_t>(kMaxInaccessibleDetails))) return false;
     if (w.debugPrivilegeStatus > static_cast<uint32_t>(DebugPrivilegeStatus::Failed) ||
@@ -340,6 +342,10 @@ void DecodeScanFlags(ScanResult& result, uint32_t flags) noexcept {
 
 bool IsDefiniteNonDiskType(DWORD fileType) noexcept {
     return fileType == FILE_TYPE_PIPE || fileType == FILE_TYPE_CHAR;
+}
+
+bool ShouldFallbackToPath(bool targetIdentityAvailable) noexcept {
+    return !targetIdentityAvailable;
 }
 
 size_t ScanShardForObject(uintptr_t object, size_t position, size_t workers) noexcept {
@@ -502,6 +508,7 @@ ScanResult ScanHandles(const std::wstring& file) {
         uint32_t examined = 0;
         uint32_t cachedNegative = 0;
         uint32_t uninspectable = 0;
+        uint32_t skippedPathQueries = 0;
         uint32_t slowestMs = 0;
         uint32_t slowestPid = 0;
         ScanStage slowestStage = ScanStage::None;
@@ -614,12 +621,16 @@ ScanResult ScanHandles(const std::wstring& file) {
                     matched = SameIdentity(targetId, candidate);
                     match = Match::FileId;
                     if (!matched && h.object) part.negativeObjects.insert(h.object);
-                } else {
+                } else if (ShouldFallbackToPath(hasId)) {
                     const auto pathStarted = GetTickCount64();
                     const std::wstring actual = NormalizePath(FinalPath(duplicated.get()));
                     recordTime(targetPid, ScanStage::Path, pathStarted);
                     if (!actual.empty()) matched = SamePath(actual, physicalTarget) || SamePath(actual, targetPath);
                     else { ++part.uninspectable; part.partial = true; }
+                } else {
+                    ++part.skippedPathQueries;
+                    ++part.uninspectable;
+                    part.partial = true;
                 }
                 if (matched) {
                     if (!h.object) part.partial = true;
@@ -648,6 +659,7 @@ ScanResult ScanHandles(const std::wstring& file) {
         result.examinedHandles += part.examined;
         result.cachedNegativeHandles += part.cachedNegative;
         result.uninspectable += part.uninspectable;
+        result.skippedPathQueries += part.skippedPathQueries;
         result.partial = result.partial || part.partial;
         result.timeout = result.timeout || part.timeout;
         if (part.slowestMs > result.slowestOperationMs) {
@@ -741,6 +753,7 @@ int RunScanWorker(const std::wstring& filename) {
     out.eligibleHandles = result.eligibleHandles;
     out.examinedHandles = result.examinedHandles;
     out.cachedNegativeHandles = result.cachedNegativeHandles;
+    out.skippedPathQueries = result.skippedPathQueries;
     out.elapsedMs = result.elapsedMs;
     out.debugPrivilegeStatus = static_cast<uint32_t>(result.debugPrivilegeStatus);
     out.debugPrivilegeError = result.debugPrivilegeError;
@@ -940,6 +953,7 @@ ScanResult RunIsolatedScan(const std::wstring& filename, const volatile LONG* ca
     result.eligibleHandles = wire.eligibleHandles;
     result.examinedHandles = wire.examinedHandles;
     result.cachedNegativeHandles = wire.cachedNegativeHandles;
+    result.skippedPathQueries = wire.skippedPathQueries;
     result.elapsedMs = wire.elapsedMs;
     result.debugPrivilegeStatus = static_cast<DebugPrivilegeStatus>(wire.debugPrivilegeStatus);
     result.debugPrivilegeError = wire.debugPrivilegeError;

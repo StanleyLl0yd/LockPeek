@@ -13,6 +13,12 @@ GitHub Actions is configured to build Win32 x64 with `/MT`, run these tests, val
 - Executable: 230,400 bytes; only seven Windows system DLL imports. No dynamic VC++ CRT imports; manifest/CFG/ASLR/DEP checks passed. GUI idle startup and forged-message smoke passed on the server runner. The binary's SHA-256 must be read from the corresponding run's `build-info.txt`.
 - **None** of these checks qualifies a clean Windows 10/11 client deployment or a stable 14.52+ C++23 build.
 
+## Slow final-path regression acceptance (v0.1.7)
+
+- Reproduce the original Windows 11 case where elevated v0.1.6 took 15,188 ms and logged a single 15,047-ms `FinalPath` for PID 10324, while non-elevated took 141 ms. In the new version, a foreign handle lacking File ID must **not** trigger `FinalPath` when target File ID is known; the report must count a skipped path and declare the scan partial.
+- If selected target File ID is not available, preserve the existing explicitly heuristic path fallback and isolated worker deadline. Never claim a complete scan in either case when candidate identity was unavailable.
+- Compare same-file matching, elapsed time, skipped-path count, inaccessible PIDs and SeDebugPrivilege on actual client Windows. Hosted CI alone does not prove performance improvement.
+
 ## Elevated performance and debug privilege acceptance (v0.1.6)
 
 - Compare copied reports for the **same locally open file** after a normal and an admin scan. Confirm both identify the same holder by File ID, list the elapsed time and the number of worker threads, and include the slowest stage/PID when measured.
