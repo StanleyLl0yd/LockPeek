@@ -320,10 +320,10 @@ void IntegrationTests() {
             bool found = false;
             for (const auto& hit : single.hits) if (hit.pid == a.pid) found = true;
             Check(!single.win32Error && !single.timeout && found, "detect one file holder");
-            Check(single.workersUsed >= 1 && single.workersUsed <= kElevatedScanWorkers,
+            Check(single.workersUsed >= 1 && single.workersUsed <= lockpeek::kElevatedScanWorkers,
                   "isolated worker reports bounded parallel inspection");
-            Check(single.debugPrivilegeStatus != DebugPrivilegeStatus::Enabled ||
-                  (single.debugPrivilegeError == 0 && single.workersUsed == kElevatedScanWorkers),
+            Check(single.debugPrivilegeStatus != lockpeek::DebugPrivilegeStatus::Enabled ||
+                  (single.debugPrivilegeError == 0 && single.workersUsed == lockpeek::kElevatedScanWorkers),
                   "verified SeDebugPrivilege uses elevated parallel scan");
             Check(single.targetIdentityAvailable, "test target identity captured across IPC");
         }
