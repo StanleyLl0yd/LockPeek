@@ -3,10 +3,13 @@
 #include "scanner.h"
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cstddef>
 #include <winsvc.h>
 #include <cstring>
 #include <deque>
+#include <exception>
+#include <thread>
 #include <cwchar>
 #include <cwctype>
 #include <limits>
@@ -67,6 +70,78 @@ constexpr size_t kMaxSnapshot = 128u * 1024u * 1024u;
 // Leave time for the worker to confirm matches and send a complete IPC reply
 // before the parent watchdog fires on machines with many file handles.
 constexpr ULONGLONG kInternalDeadlineMs = 22000;
+
+// The high privilege is scoped to this short-lived isolated worker only.
+// A successful AdjustTokenPrivileges call is not sufficient; the resulting
+// token must actually contain the enabled privilege.
+class ScopedDebugPrivilege {
+    Handle token_;
+    TOKEN_PRIVILEGES previous_{};
+    bool restore_ = false;
+public:
+    DebugPrivilegeStatus status = DebugPrivilegeStatus::Failed;
+    DWORD error = ERROR_SUCCESS;
+
+    ScopedDebugPrivilege() {
+        HANDLE raw = nullptr;
+        if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY | TOKEN_ADJUST_PRIVILEGES, &raw)) {
+            error = GetLastError(); return;
+        }
+        token_.reset(raw);
+        TOKEN_ELEVATION elevated{};
+        DWORD used = 0;
+        if (!GetTokenInformation(token_.get(), TokenElevation, &elevated, sizeof(elevated), &used)) {
+            error = GetLastError(); return;
+        }
+        if (!elevated.TokenIsElevated) {
+            status = DebugPrivilegeStatus::NotElevated;
+            return;
+        }
+        LUID luid{};
+        if (!LookupPrivilegeValueW(nullptr, SE_DEBUG_NAME, &luid)) {
+            error = GetLastError(); return;
+        }
+        TOKEN_PRIVILEGES requested{};
+        requested.PrivilegeCount = 1;
+        requested.Privileges[0].Luid = luid;
+        requested.Privileges[0].Attributes = SE_PRIVILEGE_ENABLED;
+        DWORD previousBytes = sizeof(previous_);
+        SetLastError(ERROR_SUCCESS);
+        const BOOL changed = AdjustTokenPrivileges(token_.get(), FALSE, &requested,
+                                                  sizeof(previous_), &previous_, &previousBytes);
+        const DWORD adjustError = GetLastError();
+        if (!changed || adjustError != ERROR_SUCCESS) {
+            status = adjustError == ERROR_NOT_ALL_ASSIGNED ?
+                DebugPrivilegeStatus::NotAssigned : DebugPrivilegeStatus::Failed;
+            error = adjustError ? adjustError : ERROR_GEN_FAILURE;
+            return;
+        }
+        restore_ = previous_.PrivilegeCount != 0;
+        DWORD bytes = 0;
+        GetTokenInformation(token_.get(), TokenPrivileges, nullptr, 0, &bytes);
+        if (!bytes || bytes > 65536) { error = ERROR_INVALID_DATA; return; }
+        std::vector<std::byte> data(bytes);
+        if (!GetTokenInformation(token_.get(), TokenPrivileges, data.data(), bytes, &bytes)) {
+            error = GetLastError(); return;
+        }
+        const auto* info = reinterpret_cast<const TOKEN_PRIVILEGES*>(data.data());
+        for (DWORD i = 0; i < info->PrivilegeCount; ++i) {
+            if (info->Privileges[i].Luid.LowPart == luid.LowPart &&
+                info->Privileges[i].Luid.HighPart == luid.HighPart &&
+                (info->Privileges[i].Attributes & SE_PRIVILEGE_ENABLED)) {
+                status = DebugPrivilegeStatus::Enabled;
+                return;
+            }
+        }
+        error = ERROR_NOT_ALL_ASSIGNED;
+        status = DebugPrivilegeStatus::NotAssigned;
+    }
+    ~ScopedDebugPrivilege() {
+        if (restore_) AdjustTokenPrivileges(token_.get(), FALSE, &previous_, 0, nullptr, nullptr);
+    }
+    ScopedDebugPrivilege(const ScopedDebugPrivilege&) = delete;
+    ScopedDebugPrivilege& operator=(const ScopedDebugPrivilege&) = delete;
+};
 
 std::wstring ModuleName() {
     std::wstring s(32768, L'\0');
@@ -231,6 +306,13 @@ bool ValidWire(const WireResult& w) noexcept {
     if (w.examinedHandles > w.eligibleHandles || w.cachedNegativeHandles > w.examinedHandles) return false;
     if (w.inaccessible > w.examinedHandles ||
         w.inaccessibleDetailsCount != std::min(w.inaccessible, static_cast<uint32_t>(kMaxInaccessibleDetails))) return false;
+    if (w.debugPrivilegeStatus > static_cast<uint32_t>(DebugPrivilegeStatus::Failed) ||
+        w.workersUsed > kElevatedScanWorkers ||
+        w.slowestOperationStage > static_cast<uint32_t>(ScanStage::Path)) return false;
+    if (w.debugPrivilegeStatus == static_cast<uint32_t>(DebugPrivilegeStatus::Enabled) && w.debugPrivilegeError) return false;
+    if (w.debugPrivilegeStatus == static_cast<uint32_t>(DebugPrivilegeStatus::NotElevated) && w.debugPrivilegeError) return false;
+    if (w.slowestOperationStage == 0 && (w.slowestOperationMs || w.slowestOperationPid)) return false;
+    if (w.slowestOperationStage != 0 && !w.slowestOperationPid) return false;
     for (uint32_t i = 0; i < w.inaccessibleDetailsCount; ++i) {
         const auto& entry = w.inaccessibleDetails[i];
         if (!entry.pid || !entry.win32Error) return false;
@@ -258,6 +340,13 @@ void DecodeScanFlags(ScanResult& result, uint32_t flags) noexcept {
 
 bool IsDefiniteNonDiskType(DWORD fileType) noexcept {
     return fileType == FILE_TYPE_PIPE || fileType == FILE_TYPE_CHAR;
+}
+
+size_t ScanShardForObject(uintptr_t object, size_t position, size_t workers) noexcept {
+    if (!workers) return 0;
+    if (!object) return position % workers;
+    const uintptr_t mixed = (object >> 5) ^ (object >> 17) ^ (object >> 29);
+    return static_cast<size_t>(mixed % workers);
 }
 
 // A process with many handles must not exhaust the bounded worker's time
@@ -337,6 +426,9 @@ std::wstring QuoteArgument(const std::wstring& in) {
 
 ScanResult ScanHandles(const std::wstring& file) {
     ScanResult result{};
+    ScopedDebugPrivilege privilege;
+    result.debugPrivilegeStatus = privilege.status;
+    result.debugPrivilegeError = privilege.error;
     const std::wstring targetPath = NormalizePath(file);
     if (targetPath.empty()) { result.win32Error = ERROR_INVALID_NAME; return result; }
     // Extended-length Win32 paths preserve Unicode names past MAX_PATH.
@@ -396,20 +488,29 @@ ScanResult ScanHandles(const std::wstring& file) {
     }
     if (!fileType) { result.win32Error = ERROR_NOT_SUPPORTED; return result; }
 
-    std::unordered_map<ULONG_PTR, Process> processes;
-    std::vector<Evidence> possible;
-    std::unordered_set<ULONG_PTR> inaccessiblePids;
-    std::unordered_map<void*, Match> positiveObjectMatches;
-    // Cache only proven nonmatches: a different File ID, or a definite
-    // non-disk type. Never cache unknown types, query failures, or
-    // path-heuristic misses. Entries live only for this native snapshot.
-    std::unordered_set<void*> negativeObjectMatches;
+    // All work on independent file objects is parallelizable. Every handle
+    // sharing a FILE_OBJECT pointer goes to the same bounded worker, so the
+    // proven-positive/negative caches remain sound without shared locks.
+    // Non-elevated scans stay single-threaded to preserve their fast baseline.
+    struct ScanScratch {
+        std::unordered_map<ULONG_PTR, Process> processes;
+        std::vector<Evidence> possible;
+        std::unordered_set<ULONG_PTR> inaccessiblePids;
+        std::vector<InaccessibleProcess> inaccessibleDetails;
+        std::unordered_map<void*, Match> positiveObjects;
+        std::unordered_set<void*> negativeObjects;
+        uint32_t examined = 0;
+        uint32_t cachedNegative = 0;
+        uint32_t uninspectable = 0;
+        uint32_t slowestMs = 0;
+        uint32_t slowestPid = 0;
+        ScanStage slowestStage = ScanStage::None;
+        bool partial = false;
+        bool timeout = false;
+    };
     const ULONGLONG started = GetTickCount64();
     std::vector<size_t> eligible;
     std::vector<uint32_t> eligiblePids;
-    // Construct a bounded index over this single immutable native snapshot.
-    // Every candidate remains in the queue, but the bounded deadline can
-    // still stop the scan early. That timeout is explicitly reported.
     for (size_t i = 0; i < snapshot.count; ++i) {
         const auto& h = snapshot.handles[i];
         if (h.typeIndex != fileType || h.pid == pid || h.pid == 0 || h.pid > UINT32_MAX) continue;
@@ -418,89 +519,157 @@ ScanResult ScanHandles(const std::wstring& file) {
     }
     result.eligibleHandles = static_cast<uint32_t>(eligible.size());
     const auto order = FairHandleOrder(eligiblePids);
-    for (size_t position : order) {
-        if (GetTickCount64() - started >= kInternalDeadlineMs) {
-            result.partial = true;
-            result.timeout = true;
-            break;
-        }
-        const auto& h = snapshot.handles[eligible[position]];
-        ++result.examinedHandles;
-        auto [it, inserted] = processes.try_emplace(h.pid);
-        if (inserted) {
-            // Capture the failure immediately before any other Win32 call overwrites GetLastError.
-            HANDLE duplicateAccess = OpenProcess(PROCESS_DUP_HANDLE, FALSE, static_cast<DWORD>(h.pid));
-            const DWORD duplicateError = duplicateAccess ? ERROR_SUCCESS : GetLastError();
-            it->second.duplicator.reset(duplicateAccess);
-            it->second.identity.reset(OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, static_cast<DWORD>(h.pid)));
-            if (it->second.identity.valid()) it->second.creation = CreationTime(it->second.identity.get());
-            if (!it->second.duplicator.valid()) {
-                if (inaccessiblePids.insert(h.pid).second &&
-                    result.inaccessibleProcesses.size() < kMaxInaccessibleDetails) {
-                    result.inaccessibleProcesses.push_back({static_cast<uint32_t>(h.pid),
-                        duplicateError ? duplicateError : ERROR_GEN_FAILURE, it->second.creation, {}});
+    const unsigned workers = (privilege.status == DebugPrivilegeStatus::NotElevated || order.empty()) ?
+        1u : std::min<unsigned>(kElevatedScanWorkers, static_cast<unsigned>(order.size()));
+    result.workersUsed = workers;
+    std::array<ScanScratch, kElevatedScanWorkers> scratch;
+    std::array<std::exception_ptr, kElevatedScanWorkers> failures{};
+    std::atomic<bool> timedOut{false};
+    auto runShard = [&](unsigned shard) {
+        try {
+            auto& part = scratch[shard];
+            auto recordTime = [&](DWORD targetPid, ScanStage stage, ULONGLONG begun) {
+                const auto ms = static_cast<uint32_t>(GetTickCount64() - begun);
+                if (ms > part.slowestMs) {
+                    part.slowestMs = ms;
+                    part.slowestPid = targetPid;
+                    part.slowestStage = stage;
                 }
-                result.partial = true;
+            };
+            for (size_t position : order) {
+                const auto& h = snapshot.handles[eligible[position]];
+                if (ScanShardForObject(reinterpret_cast<uintptr_t>(h.object), position, workers) != shard) continue;
+                if (timedOut.load(std::memory_order_relaxed) ||
+                    GetTickCount64() - started >= kInternalDeadlineMs) {
+                    part.timeout = true;
+                    timedOut.store(true, std::memory_order_relaxed);
+                    break;
+                }
+                ++part.examined;
+                const DWORD targetPid = static_cast<DWORD>(h.pid);
+                auto [it, inserted] = part.processes.try_emplace(h.pid);
+                if (inserted) {
+                    const auto begun = GetTickCount64();
+                    HANDLE duplicateAccess = OpenProcess(PROCESS_DUP_HANDLE, FALSE, targetPid);
+                    const DWORD duplicateError = duplicateAccess ? ERROR_SUCCESS : GetLastError();
+                    it->second.duplicator.reset(duplicateAccess);
+                    it->second.identity.reset(OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, targetPid));
+                    if (it->second.identity.valid()) it->second.creation = CreationTime(it->second.identity.get());
+                    recordTime(targetPid, ScanStage::OpenProcess, begun);
+                    if (!it->second.duplicator.valid()) {
+                        if (part.inaccessiblePids.insert(h.pid).second &&
+                            part.inaccessibleDetails.size() < kMaxInaccessibleDetails) {
+                            part.inaccessibleDetails.push_back({targetPid,
+                                duplicateError ? duplicateError : ERROR_GEN_FAILURE, it->second.creation, {}});
+                        }
+                        part.partial = true;
+                    }
+                }
+                if (!it->second.duplicator.valid()) continue;
+                if (h.object && part.negativeObjects.contains(h.object)) {
+                    ++part.cachedNegative;
+                    continue;
+                }
+                if (h.object) {
+                    const auto known = part.positiveObjects.find(h.object);
+                    if (known != part.positiveObjects.end()) {
+                        part.possible.push_back({h.pid, h.handle, h.object, h.typeIndex,
+                                                 known->second, it->second.creation});
+                        continue;
+                    }
+                }
+                HANDLE raw = nullptr;
+                const auto duplicateStarted = GetTickCount64();
+                const BOOL copied = DuplicateHandle(it->second.duplicator.get(),
+                    reinterpret_cast<HANDLE>(h.handle), GetCurrentProcess(), &raw,
+                    0, FALSE, DUPLICATE_SAME_ACCESS);
+                recordTime(targetPid, ScanStage::Duplicate, duplicateStarted);
+                if (!copied) {
+                    ++part.uninspectable;
+                    part.partial = true;
+                    continue;
+                }
+                Handle duplicated(raw);
+                const auto typeStarted = GetTickCount64();
+                const DWORD kind = GetFileType(duplicated.get());
+                recordTime(targetPid, ScanStage::FileType, typeStarted);
+                if (kind != FILE_TYPE_DISK) {
+                    if (h.object && IsDefiniteNonDiskType(kind)) part.negativeObjects.insert(h.object);
+                    if (kind == FILE_TYPE_UNKNOWN) {
+                        ++part.uninspectable;
+                        part.partial = true;
+                    }
+                    continue;
+                }
+                Match match = Match::Path;
+                bool matched = false;
+                FILE_ID_INFO candidate{};
+                bool idAvailable = false;
+                if (hasId) {
+                    const auto idStarted = GetTickCount64();
+                    idAvailable = FileIdentity(duplicated.get(), candidate);
+                    recordTime(targetPid, ScanStage::FileId, idStarted);
+                }
+                if (idAvailable) {
+                    matched = SameIdentity(targetId, candidate);
+                    match = Match::FileId;
+                    if (!matched && h.object) part.negativeObjects.insert(h.object);
+                } else {
+                    const auto pathStarted = GetTickCount64();
+                    const std::wstring actual = NormalizePath(FinalPath(duplicated.get()));
+                    recordTime(targetPid, ScanStage::Path, pathStarted);
+                    if (!actual.empty()) matched = SamePath(actual, physicalTarget) || SamePath(actual, targetPath);
+                    else { ++part.uninspectable; part.partial = true; }
+                }
+                if (matched) {
+                    if (!h.object) part.partial = true;
+                    else part.positiveObjects[h.object] = match;
+                    part.possible.push_back({h.pid, h.handle, h.object, h.typeIndex, match,
+                                             it->second.creation});
+                }
+            }
+        } catch (...) {
+            failures[shard] = std::current_exception();
+        }
+    };
+    // std::jthread joins even if another worker cannot be created. The outer
+    // parent watchdog may still terminate the entire isolated worker on a
+    // hung filesystem driver; it never terminates a discovered process.
+    std::vector<std::jthread> threads;
+    threads.reserve(workers - 1);
+    for (unsigned i = 1; i < workers; ++i) threads.emplace_back(runShard, i);
+    runShard(0);
+    for (auto& thread : threads) thread.join();
+    for (unsigned i = 0; i < workers; ++i) if (failures[i]) std::rethrow_exception(failures[i]);
+    std::vector<Evidence> possible;
+    std::unordered_set<ULONG_PTR> inaccessiblePids;
+    for (unsigned i = 0; i < workers; ++i) {
+        auto& part = scratch[i];
+        result.examinedHandles += part.examined;
+        result.cachedNegativeHandles += part.cachedNegative;
+        result.uninspectable += part.uninspectable;
+        result.partial = result.partial || part.partial;
+        result.timeout = result.timeout || part.timeout;
+        if (part.slowestMs > result.slowestOperationMs) {
+            result.slowestOperationMs = part.slowestMs;
+            result.slowestOperationPid = part.slowestPid;
+            result.slowestOperationStage = part.slowestStage;
+        }
+        for (const auto& entry : part.inaccessibleDetails) {
+            if (inaccessiblePids.insert(entry.pid).second &&
+                result.inaccessibleProcesses.size() < kMaxInaccessibleDetails) {
+                result.inaccessibleProcesses.push_back(entry);
             }
         }
-        if (!it->second.duplicator.valid()) continue;
-        if (h.object && negativeObjectMatches.contains(h.object)) {
-            ++result.cachedNegativeHandles;
-            continue;
-        }
-        // Several process handles can refer to the same underlying FILE_OBJECT.
-        // Cache only confirmed positive matches; failures are never cached
-        // because another handle may have more query-capable access rights.
-        if (h.object) {
-            const auto known = positiveObjectMatches.find(h.object);
-            if (known != positiveObjectMatches.end()) {
-                possible.push_back({h.pid, h.handle, h.object, h.typeIndex, known->second, it->second.creation});
-                continue;
-            }
-        }
-        HANDLE raw = nullptr;
-        if (!DuplicateHandle(it->second.duplicator.get(), reinterpret_cast<HANDLE>(h.handle),
-                             GetCurrentProcess(), &raw, 0, FALSE, DUPLICATE_SAME_ACCESS)) {
-            ++result.uninspectable;
-            result.partial = true;
-            continue;
-        }
-        Handle duplicated(raw);
-        // The NT FILE object type also covers pipes and device handles.
-        // FileIdInfo is not valid for pipes; avoid issuing potentially
-        // blocking filesystem-name queries against those unrelated objects.
-        const DWORD kind = GetFileType(duplicated.get());
-        if (kind != FILE_TYPE_DISK) {
-            // Duplicated pipe/character FILE_OBJECTs cannot reference the
-            // selected ordinary disk file. Reuse this *verified* nonmatch;
-            // FILE_TYPE_UNKNOWN could be an API failure and is never cached.
-            if (h.object && IsDefiniteNonDiskType(kind)) negativeObjectMatches.insert(h.object);
-            if (kind == FILE_TYPE_UNKNOWN) {
-                ++result.uninspectable;
-                result.partial = true;
-            }
-            continue;
-        }
-        Match match = Match::Path;
-        bool matched = false;
-        FILE_ID_INFO candidate{};
-        if (hasId && FileIdentity(duplicated.get(), candidate)) {
-            matched = SameIdentity(targetId, candidate);
-            match = Match::FileId;
-            if (!matched && h.object) negativeObjectMatches.insert(h.object);
-        } else {
-            const std::wstring actual = NormalizePath(FinalPath(duplicated.get()));
-            if (!actual.empty()) matched = SamePath(actual, physicalTarget) || SamePath(actual, targetPath);
-            else { ++result.uninspectable; result.partial = true; }
-            match = Match::Path;
-        }
-        if (matched) {
-            if (!h.object) result.partial = true; // kernel pointers may be hidden
-            else positiveObjectMatches[h.object] = match;
-            possible.push_back({h.pid, h.handle, h.object, h.typeIndex, match, it->second.creation});
-        }
+        // Keep the total even when the individual diagnostic list is capped.
+        inaccessiblePids.insert(part.inaccessiblePids.begin(), part.inaccessiblePids.end());
+        possible.insert(possible.end(), part.possible.begin(), part.possible.end());
     }
     result.inaccessible = static_cast<uint32_t>(inaccessiblePids.size());
+    if (result.examinedHandles < result.eligibleHandles) {
+        result.partial = true;
+        result.timeout = true;
+    }
     // Re-check handle + kernel object identity against a fresh snapshot to
     // reject stale snapshot entries and reused handle values. A pinned process
     // handle additionally prevents its PID being silently recycled.
@@ -573,6 +742,12 @@ int RunScanWorker(const std::wstring& filename) {
     out.examinedHandles = result.examinedHandles;
     out.cachedNegativeHandles = result.cachedNegativeHandles;
     out.elapsedMs = result.elapsedMs;
+    out.debugPrivilegeStatus = static_cast<uint32_t>(result.debugPrivilegeStatus);
+    out.debugPrivilegeError = result.debugPrivilegeError;
+    out.workersUsed = result.workersUsed;
+    out.slowestOperationMs = result.slowestOperationMs;
+    out.slowestOperationPid = result.slowestOperationPid;
+    out.slowestOperationStage = static_cast<uint32_t>(result.slowestOperationStage);
     out.targetVolume = result.targetVolume;
     out.targetFileId = result.targetFileId;
     for (uint32_t i = 0; i < out.count; ++i) {
@@ -766,6 +941,12 @@ ScanResult RunIsolatedScan(const std::wstring& filename, const volatile LONG* ca
     result.examinedHandles = wire.examinedHandles;
     result.cachedNegativeHandles = wire.cachedNegativeHandles;
     result.elapsedMs = wire.elapsedMs;
+    result.debugPrivilegeStatus = static_cast<DebugPrivilegeStatus>(wire.debugPrivilegeStatus);
+    result.debugPrivilegeError = wire.debugPrivilegeError;
+    result.workersUsed = wire.workersUsed;
+    result.slowestOperationMs = wire.slowestOperationMs;
+    result.slowestOperationPid = wire.slowestOperationPid;
+    result.slowestOperationStage = static_cast<ScanStage>(wire.slowestOperationStage);
     for (uint32_t i = 0; i < wire.count; ++i) {
         const auto& h = wire.hits[i];
         result.hits.push_back({h.pid, h.creation, static_cast<Match>(h.match), {}});

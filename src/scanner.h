@@ -14,10 +14,13 @@ constexpr unsigned kMaxHits = 128;
 constexpr unsigned kMaxInaccessibleDetails = 256;
 constexpr DWORD kScanDeadlineMs = 26000;
 constexpr DWORD kScanPollMs = 200;
+constexpr unsigned kElevatedScanWorkers = 4; // bounded concurrent inspection
 
 // Only the worker process calls ScanHandles. The UI never calls potentially
 // blocking filesystem/native-object operations on its own threads.
 enum class Match : uint32_t { FileId = 1, Path = 2 };
+enum class DebugPrivilegeStatus : uint32_t { NotElevated = 0, Enabled = 1, NotAssigned = 2, Failed = 3 };
+enum class ScanStage : uint32_t { None = 0, OpenProcess = 1, Duplicate = 2, FileType = 3, FileId = 4, Path = 5 };
 struct Hit {
     DWORD pid = 0;
     uint64_t creation = 0; // 0 means identity is not verified
@@ -48,11 +51,17 @@ struct ScanResult {
     uint32_t examinedHandles = 0;
     uint32_t cachedNegativeHandles = 0;
     uint32_t elapsedMs = 0;
+    DebugPrivilegeStatus debugPrivilegeStatus = DebugPrivilegeStatus::NotElevated;
+    uint32_t debugPrivilegeError = 0;
+    uint32_t workersUsed = 0;
+    uint32_t slowestOperationMs = 0;
+    uint32_t slowestOperationPid = 0;
+    ScanStage slowestOperationStage = ScanStage::None;
     std::vector<Hit> hits;
 };
 
 // Fixed-size, versioned IPC payload. No C++ objects or pointers cross the pipe.
-constexpr uint32_t kMagic = 0x344B504C; // LPK4: bounded access-denial diagnostics
+constexpr uint32_t kMagic = 0x354B504C; // LPK5: privilege status and parallel-scan profiling
 struct WireHit {
     uint32_t pid;
     uint32_t match;
@@ -78,13 +87,19 @@ struct WireResult {
     uint32_t cachedNegativeHandles = 0;
     uint32_t elapsedMs = 0;
     uint32_t inaccessibleDetailsCount = 0;
+    uint32_t debugPrivilegeStatus = 0;
+    uint32_t debugPrivilegeError = 0;
+    uint32_t workersUsed = 0;
+    uint32_t slowestOperationMs = 0;
+    uint32_t slowestOperationPid = 0;
+    uint32_t slowestOperationStage = 0;
     uint64_t targetVolume = 0;
     std::array<uint8_t, 16> targetFileId{};
     WireHit hits[kMaxHits]{};
     WireInaccessible inaccessibleDetails[kMaxInaccessibleDetails]{};
 };
 static_assert(sizeof(WireHit) == 16);
-static_assert(sizeof(WireResult) == 80 + 16 * kMaxHits + 16 * kMaxInaccessibleDetails);
+static_assert(sizeof(WireResult) == 104 + 16 * kMaxHits + 16 * kMaxInaccessibleDetails);
 static_assert(sizeof(WireResult) <= 8192, "Worker must fit pipe buffer");
 
 // A weak observation only: an incomplete scan cannot prove release.
@@ -94,6 +109,8 @@ uint32_t EncodeScanFlags(const ScanResult& result) noexcept;
 void DecodeScanFlags(ScanResult& result, uint32_t flags) noexcept;
 // Only explicitly known non-disk types may be cached as negative evidence.
 bool IsDefiniteNonDiskType(DWORD fileType) noexcept;
+// Keep all duplicate FILE_OBJECT entries on the same worker for cache safety.
+size_t ScanShardForObject(uintptr_t object, size_t position, size_t workers) noexcept;
 // Fairly interleave handles by PID while retaining original order within each PID.
 std::vector<size_t> FairHandleOrder(const std::vector<uint32_t>& pids);
 bool ValidateExtendedHandleBuffer(const void* data, size_t bytes, size_t& count) noexcept;

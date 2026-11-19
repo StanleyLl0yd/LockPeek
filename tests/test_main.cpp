@@ -122,6 +122,31 @@ void UnitTests() {
     access.inaccessibleDetails[0].pid = 123;
     Check(ValidWire(access), "accept restored inaccessible diagnostic records");
     Check(sizeof(WireResult) <= 8192, "worker IPC must fit pipe buffer");
+    WireResult privilege{};
+    privilege.size = sizeof(privilege);
+    privilege.debugPrivilegeStatus = static_cast<uint32_t>(DebugPrivilegeStatus::Enabled);
+    privilege.workersUsed = kElevatedScanWorkers;
+    Check(ValidWire(privilege), "accept enabled privilege and bounded elevated worker count");
+    privilege.debugPrivilegeError = ERROR_ACCESS_DENIED;
+    Check(!ValidWire(privilege), "reject enabled privilege paired with activation error");
+    privilege.debugPrivilegeError = 0;
+    privilege.debugPrivilegeStatus = 42;
+    Check(!ValidWire(privilege), "reject unrecognized privilege state");
+    privilege.debugPrivilegeStatus = static_cast<uint32_t>(DebugPrivilegeStatus::NotAssigned);
+    privilege.debugPrivilegeError = ERROR_NOT_ALL_ASSIGNED;
+    Check(ValidWire(privilege), "retain explicit missing SeDebugPrivilege in elevated token");
+    privilege.workersUsed = kElevatedScanWorkers + 1;
+    Check(!ValidWire(privilege), "reject excessive parallel worker count");
+    privilege.workersUsed = kElevatedScanWorkers;
+    privilege.slowestOperationStage = 99;
+    Check(!ValidWire(privilege), "reject unknown scanner stage");
+    privilege.slowestOperationStage = static_cast<uint32_t>(ScanStage::FileId);
+    Check(!ValidWire(privilege), "reject slowest operation without PID");
+    privilege.slowestOperationPid = 1234;
+    privilege.slowestOperationMs = 50;
+    Check(ValidWire(privilege), "accept bounded slowest operation timing diagnostic");
+    privilege.slowestOperationStage = 0;
+    Check(!ValidWire(privilege), "reject inconsistent timing without stage");
     WireResult capped{};
     capped.size = sizeof(capped);
     capped.eligibleHandles = capped.examinedHandles = capped.inaccessible = kMaxInaccessibleDetails + 1;
@@ -167,6 +192,11 @@ void UnitTests() {
     const std::vector<uint32_t> pids{11, 11, 11, 22, 22, 33};
     const std::vector<size_t> expected{0, 3, 5, 1, 4, 2};
     Check(FairHandleOrder(pids) == expected, "interleave handles fairly across processes");
+    Check(ScanShardForObject(0, 5, 4) == 1, "null kernel object distributes by fair position");
+    Check(ScanShardForObject(0x12345ABC, 1, 4) == ScanShardForObject(0x12345ABC, 99, 4),
+          "shared FILE_OBJECT cannot cross parallel scan workers");
+    Check(ScanShardForObject(0x12345000, 0, 1) == 0, "single-threaded scanner accepts every file object");
+    Check(ScanShardForObject(0, 100, 0) == 0, "zero-worker shard helper fails closed");
     Check(IsDefiniteNonDiskType(FILE_TYPE_PIPE) && IsDefiniteNonDiskType(FILE_TYPE_CHAR),
           "cache proven pipe/character file-object nonmatches");
     Check(!IsDefiniteNonDiskType(FILE_TYPE_DISK) && !IsDefiniteNonDiskType(FILE_TYPE_UNKNOWN),
@@ -181,8 +211,8 @@ void UnitTests() {
     timedOut.targetIdentityAvailable = true;
     Check(!NoMatchingHandlesObserved(timedOut),
           "internal scan timeout can never imply an open file was released");
-    Check(sizeof(WireResult) == 80 + 16 * kMaxHits + 16 * kMaxInaccessibleDetails,
-          "LPK4 IPC carries bounded access failures and scan counters");
+    Check(sizeof(WireResult) == 104 + 16 * kMaxHits + 16 * kMaxInaccessibleDetails,
+          "LPK5 IPC carries bounded access failures and privilege/performance counters");
     std::array<std::byte, 56> snap{};
     size_t count = 7;
     Check(!ValidateExtendedHandleBuffer(snap.data(), 15, count) && count == 0,
@@ -290,6 +320,11 @@ void IntegrationTests() {
             bool found = false;
             for (const auto& hit : single.hits) if (hit.pid == a.pid) found = true;
             Check(!single.win32Error && !single.timeout && found, "detect one file holder");
+            Check(single.workersUsed >= 1 && single.workersUsed <= kElevatedScanWorkers,
+                  "isolated worker reports bounded parallel inspection");
+            Check(single.debugPrivilegeStatus != DebugPrivilegeStatus::Enabled ||
+                  (single.debugPrivilegeError == 0 && single.workersUsed == kElevatedScanWorkers),
+                  "verified SeDebugPrivilege uses elevated parallel scan");
             Check(single.targetIdentityAvailable, "test target identity captured across IPC");
         }
         const bool second = LaunchHold(path, r2, stop, b) &&
