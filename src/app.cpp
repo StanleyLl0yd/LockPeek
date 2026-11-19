@@ -449,6 +449,9 @@ class App {
                   std::to_wstring(result_.cachedNegativeHandles) +
                   Text(L"; elapsed ms ", L"; длительность, мс ") +
                   std::to_wstring(result_.elapsedMs) + L"\r\n";
+        report += Text(L"Skipped path lookups for unverified candidate File IDs: ",
+                       L"Пропущено запросов пути при неизвестном File ID дескриптора: ") +
+                  std::to_wstring(result_.skippedPathQueries) + L"\r\n";
         report += Text(L"Concurrent scanner workers: ", L"Параллельных потоков сканирования: ") +
                   std::to_wstring(result_.workersUsed) + L"\r\n";
         const wchar_t* debugState = L"not elevated";

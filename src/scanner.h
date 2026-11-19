@@ -50,6 +50,7 @@ struct ScanResult {
     uint32_t eligibleHandles = 0;
     uint32_t examinedHandles = 0;
     uint32_t cachedNegativeHandles = 0;
+    uint32_t skippedPathQueries = 0; // file ID unknown for candidate, target ID verified
     uint32_t elapsedMs = 0;
     DebugPrivilegeStatus debugPrivilegeStatus = DebugPrivilegeStatus::NotElevated;
     uint32_t debugPrivilegeError = 0;
@@ -61,7 +62,7 @@ struct ScanResult {
 };
 
 // Fixed-size, versioned IPC payload. No C++ objects or pointers cross the pipe.
-constexpr uint32_t kMagic = 0x354B504C; // LPK5: privilege status and parallel-scan profiling
+constexpr uint32_t kMagic = 0x364B504C; // LPK6: conservative path query suppression
 struct WireHit {
     uint32_t pid;
     uint32_t match;
@@ -93,6 +94,7 @@ struct WireResult {
     uint32_t slowestOperationMs = 0;
     uint32_t slowestOperationPid = 0;
     uint32_t slowestOperationStage = 0;
+    uint32_t skippedPathQueries = 0; // previously alignment padding, fixed IPC size unchanged
     uint64_t targetVolume = 0;
     std::array<uint8_t, 16> targetFileId{};
     WireHit hits[kMaxHits]{};
@@ -109,6 +111,9 @@ uint32_t EncodeScanFlags(const ScanResult& result) noexcept;
 void DecodeScanFlags(ScanResult& result, uint32_t flags) noexcept;
 // Only explicitly known non-disk types may be cached as negative evidence.
 bool IsDefiniteNonDiskType(DWORD fileType) noexcept;
+// Avoid potentially blocking foreign-handle name queries when target File ID
+// is already verified; uncertain candidates are recorded as uninspectable.
+bool ShouldFallbackToPath(bool targetIdentityAvailable) noexcept;
 // Keep all duplicate FILE_OBJECT entries on the same worker for cache safety.
 size_t ScanShardForObject(uintptr_t object, size_t position, size_t workers) noexcept;
 // Fairly interleave handles by PID while retaining original order within each PID.

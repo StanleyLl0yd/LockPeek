@@ -95,6 +95,18 @@ void UnitTests() {
     Check(!ValidWire(wire), "reject IPC negative cache count beyond examined");
     wire.cachedNegativeHandles = 1;
     Check(ValidWire(wire), "accept consistent bounded scan diagnostic counters");
+    wire.skippedPathQueries = 1;
+    Check(!ValidWire(wire), "reject skipped path count without candidate uninspectable count");
+    wire.uninspectable = 1;
+    wire.flags = 4; // verified target File ID but not marked partial
+    Check(!ValidWire(wire), "reject skipped path candidate without explicit partial flag");
+    wire.flags = 5;
+    Check(ValidWire(wire), "accept verified target ID with a conservatively skipped candidate");
+    wire.skippedPathQueries = 2;
+    Check(!ValidWire(wire), "reject skipped path count exceeding unavailable candidates");
+    wire.skippedPathQueries = 0;
+    wire.uninspectable = 0;
+    wire.flags = 0;
     wire.eligibleHandles = wire.examinedHandles = wire.cachedNegativeHandles = 0;
     WireResult access{};
     access.size = sizeof(access);
@@ -197,6 +209,8 @@ void UnitTests() {
           "shared FILE_OBJECT cannot cross parallel scan workers");
     Check(ScanShardForObject(0x12345000, 0, 1) == 0, "single-threaded scanner accepts every file object");
     Check(ScanShardForObject(0, 100, 0) == 0, "zero-worker shard helper fails closed");
+    Check(!ShouldFallbackToPath(true) && ShouldFallbackToPath(false),
+          "skip risky foreign path only when selected target File ID is available");
     Check(IsDefiniteNonDiskType(FILE_TYPE_PIPE) && IsDefiniteNonDiskType(FILE_TYPE_CHAR),
           "cache proven pipe/character file-object nonmatches");
     Check(!IsDefiniteNonDiskType(FILE_TYPE_DISK) && !IsDefiniteNonDiskType(FILE_TYPE_UNKNOWN),
@@ -212,7 +226,7 @@ void UnitTests() {
     Check(!NoMatchingHandlesObserved(timedOut),
           "internal scan timeout can never imply an open file was released");
     Check(sizeof(WireResult) == 104 + 16 * kMaxHits + 16 * kMaxInaccessibleDetails,
-          "LPK5 IPC carries bounded access failures and privilege/performance counters");
+          "LPK6 IPC preserves bounded layout while adding skipped-path counter");
     std::array<std::byte, 56> snap{};
     size_t count = 7;
     Check(!ValidateExtendedHandleBuffer(snap.data(), 15, count) && count == 0,
